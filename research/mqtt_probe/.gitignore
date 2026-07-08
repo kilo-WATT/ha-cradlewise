@@ -1,0 +1,31 @@
+# Credentials and environment files
+.env
+.env.*
+*.env
+
+# Certificates, keys, and keystores
+*.pem
+*.key
+*.crt
+*.cer
+*.der
+*.p12
+*.pfx
+*.jks
+*.keystore
+
+# Probe output and temporary material
+tmp/
+temp/
+certificates/
+downloads/
+output/
+*.log
+*.jsonl
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
