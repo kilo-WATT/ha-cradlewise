@@ -11,11 +11,13 @@ from typing import Any
 from pycradlewise import CradlewiseCradle, SleepAnalytics
 
 from homeassistant.components.sensor import (
+    SensorDeviceClass,
     SensorEntity,
     SensorEntityDescription,
     SensorStateClass,
 )
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import UnitOfTemperature
 try:
     from homeassistant.const import EntityCategory
 except ImportError:
@@ -94,14 +96,14 @@ SENSOR_DESCRIPTIONS: tuple[CradlewiseSensorEntityDescription, ...] = (
         key="music_track",
         translation_key="music_track",
         icon="mdi:music-box",
-        value_fn=lambda c: c.music_track,
+        value_fn=lambda c: None if c.music_track == "None" else c.music_track,
     ),
     CradlewiseSensorEntityDescription(
         key="temperature",
         translation_key="temperature",
         icon="mdi:thermometer",
-        device_class="temperature",
-        native_unit_of_measurement="°C",
+        device_class=SensorDeviceClass.TEMPERATURE,
+        native_unit_of_measurement=UnitOfTemperature.CELSIUS,
         state_class=SensorStateClass.MEASUREMENT,
         value_fn=lambda c: c.temperature,
     ),
@@ -127,6 +129,7 @@ ANALYTICS_DESCRIPTIONS: tuple[CradlewiseAnalyticsEntityDescription, ...] = (
         key="total_soothe_count",
         translation_key="soothe_count",
         icon="mdi:hand-heart",
+        state_class=SensorStateClass.MEASUREMENT,
         value_fn=lambda a: a.total_soothe_count,
     ),
     CradlewiseAnalyticsEntityDescription(
@@ -139,6 +142,7 @@ ANALYTICS_DESCRIPTIONS: tuple[CradlewiseAnalyticsEntityDescription, ...] = (
         key="nap_count",
         translation_key="nap_count",
         icon="mdi:counter",
+        state_class=SensorStateClass.MEASUREMENT,
         value_fn=lambda a: a.nap_count,
     ),
     CradlewiseAnalyticsEntityDescription(
@@ -200,7 +204,8 @@ ANALYTICS_DESCRIPTIONS: tuple[CradlewiseAnalyticsEntityDescription, ...] = (
         key="weekly_avg_naps_per_day",
         translation_key="weekly_avg_naps_per_day",
         icon="mdi:counter",
-        value_fn=lambda a: f"{a.weekly_avg_naps_per_day:.1f}" if a.weekly_avg_naps_per_day is not None else None,
+        state_class=SensorStateClass.MEASUREMENT,
+        value_fn=lambda a: a.weekly_avg_naps_per_day,
     ),
     CradlewiseAnalyticsEntityDescription(
         key="weekly_avg_rise_time",
@@ -230,14 +235,14 @@ ANALYTICS_DESCRIPTIONS: tuple[CradlewiseAnalyticsEntityDescription, ...] = (
         key="last_nap_start",
         translation_key="last_nap_start",
         icon="mdi:clock-start",
-        device_class="timestamp",
+        device_class=SensorDeviceClass.TIMESTAMP,
         value_fn=lambda a: _parse_datetime(a.last_nap_start),
     ),
     CradlewiseAnalyticsEntityDescription(
         key="last_nap_end",
         translation_key="last_nap_end",
         icon="mdi:clock-end",
-        device_class="timestamp",
+        device_class=SensorDeviceClass.TIMESTAMP,
         value_fn=lambda a: _parse_datetime(a.last_nap_end),
     ),
     CradlewiseAnalyticsEntityDescription(

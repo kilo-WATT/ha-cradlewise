@@ -10,7 +10,7 @@ from pycradlewise import CradlewiseAuth, CradlewiseAuthError, CradlewiseClient, 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 
-from .const import CONF_EMAIL, CONF_PASSWORD, PLATFORMS
+from .const import CONF_EMAIL, CONF_PASSWORD, DEFAULT_SCAN_INTERVAL, PLATFORMS
 from .coordinator import CradlewiseCoordinator
 
 _LOGGER = logging.getLogger(__name__)
@@ -42,6 +42,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: CradlewiseConfigEntry) -
     client = CradlewiseClient(auth)
     coordinator = CradlewiseCoordinator(hass, client, app_config)
     await coordinator.async_config_entry_first_refresh()
+
+    _LOGGER.info(
+        "Cradlewise initialized in REST polling mode; MQTT is disabled "
+        "(%d cribs, %d-second interval)",
+        len(coordinator.cradles),
+        DEFAULT_SCAN_INTERVAL,
+    )
 
     entry.runtime_data = coordinator
 

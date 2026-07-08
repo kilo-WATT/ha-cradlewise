@@ -44,8 +44,6 @@
       "weekly_avg_longest_stretch": { "name": "Weekly average longest stretch" },
       "baby_age_text": { "name": "Baby age" },
       "firmware_version": { "name": "Firmware version" },
-      "total_sleep_today": { "name": "Today's total sleep" },
-      "total_awake_today": { "name": "Today's total awake" },
       "nap_count": { "name": "Today's nap count" },
       "last_nap_start": { "name": "Last nap started" },
       "last_nap_end": { "name": "Last nap ended" },
