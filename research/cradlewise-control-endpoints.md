@@ -11,6 +11,8 @@ or live devices were used.
 - Relevant application code: `classes11.dex`
 - Analysis: XAPK/APK extraction plus offline DEX string, annotation, and method
   cross-reference inspection
+- Additional evidence index: `apk-analysis-output/cradlewise-search-results.txt`
+  static-search output, summarized here without copying the full raw output
 
 ## Result
 
@@ -24,8 +26,8 @@ The MQTT transport is established by the following evidence:
 - `RemoteMqttConnectionV2.publish` publishes control data.
 - `RemoteMqttConnectionV2.subscribeUpdateAccepted` subscribes to
   `$aws/things/.../shadow/update/accepted`.
-- `MqttUtilsV2.getTopics` and `Topics.<clinit>` construct the Device Shadow
-  `get`, `update`, `update/accepted`, and `update/rejected` topics.
+- `MqttUtilsV2.getTopics` and `Topics.<clinit>` construct the classic unnamed
+  Device Shadow `get`, `update`, `accepted`, and `rejected` topic family.
 - The actuator, light, music, sound-synth, and control request/state models are
   under `com.cradlewise.nini.core.mqtt`.
 
@@ -124,6 +126,85 @@ It then calls `MqttManager.publish(String)`, which ultimately calls
 `RemoteMqttConnectionV2.publish(cradleId, message)` and publishes to the update
 topic above. Each setter sends a partial desired-state document rather than a
 complete copy of the shadow.
+
+### APK static-search cross-check
+
+The static-search output confirms the prior Device Shadow finding and does not
+reveal a REST control endpoint. It also tightens the evidence attribution for
+topic and payload names:
+
+- `jadx-out/sources/com/cradlewise/nini/core/mqtt/utils/Topics.java` defines
+  classic shadow suffix constants including `/shadow/get`,
+  `/shadow/get/accepted`, `/shadow/update`, and `/shadow/update/accepted`.
+- `apktool-out/smali_classes11/com/cradlewise/nini/core/mqtt/utils/MqttUtilsV2.smali`
+  contains the broader subscription topic construction, including
+  `/shadow/get/rejected`, `/shadow/update/rejected`, and the custom
+  `/cradle/{cradleId}/cradle_state` state stream.
+- `apktool-out/smali_classes11/com/cradlewise/nini/core/mqtt/remote/RemoteMqttConnectionV2.smali`
+  calls the cradle-state subscription helper and uses the AWS IoT MQTT manager.
+- `jadx-out/sources/com/cradlewise/nini/app/wireless/SendEvents.java` and
+  `apktool-out/smali_classes11/com/cradlewise/nini/app/wireless/SendEvents.smali`
+  show that app controls funnel through `prePareDesiredAndPublish(JSONObject)`.
+- `apktool-out/smali_classes11/com/cradlewise/nini/app/viewmodel/BounceSettingsViewModel.smali`
+  calls `SendEvents` methods for `alwaysOnBounce`, `bounceMode`,
+  `bounceDuration`, `bounceAmplitude`, `bounceSetting`,
+  `bounceResponsivitySetting`, `disableBounce`, and `superGentleBounce`.
+- `apktool-out/smali_classes11/com/cradlewise/nini/app/VideoViewModel.smali`
+  calls `SendEvents` for dashboard bounce, sound-synth, music duration, and
+  bounce-intensity updates.
+- `apktool-out/smali_classes11/com/cradlewise/nini/app/viewmodel/SettingsStartRecipeViewModel.smali`
+  calls `SendEvents.updateStartRecipeEnabled`,
+  `updateStartRecipeBounceLevel`, `updateStartRecipeMusicLevel`, and
+  `updateStartRecipeLockDuration`.
+- `apktool-out/smali_classes11/com/cradlewise/nini/app/viewmodel/SettingsSoothingViewModel.smali`
+  calls `SendEvents` for max bounce limit, bounce duration, music play, and
+  keep-bounce-on-during-sleep settings.
+- `apktool-out/smali_classes11/com/cradlewise/nini/app/hiltViewModel/SleepTrackListViewModel.smali`,
+  `apktool-out/smali_classes11/com/cradlewise/nini/app/utils/AppUtils.smali`,
+  and `apktool-out/smali_classes11/com/cradlewise/nini/app/viewmodel/SpotifySpeakerViewModel.smali`
+  provide additional music and sound-synth call sites.
+
+Confirmed desired-state field names from the search output include:
+
+- `actuator.on`
+- `actuator.amplitude`
+- `actuator.disableBouncing`
+- `actuatorBounceAlwaysOnIntensity`
+- `bounceMode`
+- `bounceDuration`
+- `bounceTimeRemaining`
+- `bounceSetting`
+- `responsivitySetting`
+- `control.crySensitivity`
+- `music.play`
+- `music`
+- `musicLevel`
+- `musicDuration`
+- `soundSynth`
+- `light.indicatorBrightness`
+- `indicatorBrightnessMode`
+- `keepBounceOnDuringSleep`
+- `keepBounceOnDuringSleepLevel`
+- `keepMusicOnDuringSleep`
+- `keepMusicOnDuringSleepLevel`
+- `startRecipeEnabled`
+- `startRecipeBounceLevel`
+- `startRecipeMusicLevel`
+- `startRecipeLockDuration`
+- `autoModeLockDuration`
+- `adaptiveSoothingEnabled`
+
+Still inferred rather than verified by the static-search output:
+
+- Exact value ranges and enum meanings for bounce level, volume, responsiveness,
+  music selections, and recipe durations.
+- Whether app DTO names and final JSON names differ for some nested music fields,
+  such as `songId` versus reported `song_id`.
+- Atomic sequencing for multi-field actions such as "start soothing".
+- Runtime AWS IoT policy behavior, accepted/rejected responses, and whether a
+  non-app client can authenticate safely.
+- Night-light writes for `lightOn` or `lightIntensity`; the app search output
+  verifies indicator-brightness writers, but not a night-light on/off writer.
 
 ## Control field matrix
 
