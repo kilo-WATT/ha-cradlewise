@@ -27,6 +27,7 @@ TO_REDACT = {
     "cradle_id",
     "cradleId",
     "email_id",
+    "entry_id",
     "last_event_value",
     "private_key",
     "profile_id",
