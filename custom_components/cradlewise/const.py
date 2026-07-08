@@ -6,7 +6,6 @@ CONF_EMAIL = "email"
 CONF_PASSWORD = "password"
 
 # Polling intervals
-DEFAULT_SCAN_INTERVAL = 30  # seconds (REST-only fallback)
-MQTT_SCAN_INTERVAL = 300  # seconds (when MQTT is active)
+DEFAULT_SCAN_INTERVAL = 30  # seconds
 
 PLATFORMS: list[str] = ["sensor", "binary_sensor"]

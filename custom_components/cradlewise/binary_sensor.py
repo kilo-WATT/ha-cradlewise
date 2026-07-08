@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any
 
 from pycradlewise import CradlewiseCradle
 
@@ -14,11 +13,14 @@ from homeassistant.components.binary_sensor import (
     BinarySensorEntityDescription,
 )
 from homeassistant.config_entries import ConfigEntry
+try:
+    from homeassistant.const import EntityCategory
+except ImportError:
+    from homeassistant.helpers.entity import EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DOMAIN
 from .coordinator import CradlewiseCoordinator
 from .sensor import _device_info
 
@@ -33,6 +35,7 @@ BINARY_SENSOR_DESCRIPTIONS: tuple[CradlewiseBinarySensorEntityDescription, ...] 
         key="online",
         translation_key="online",
         device_class=BinarySensorDeviceClass.CONNECTIVITY,
+        entity_category=EntityCategory.DIAGNOSTIC,
         value_fn=lambda c: c.online,
     ),
     CradlewiseBinarySensorEntityDescription(
@@ -43,24 +46,16 @@ BINARY_SENSOR_DESCRIPTIONS: tuple[CradlewiseBinarySensorEntityDescription, ...] 
         value_fn=lambda c: c.baby_present,
     ),
     CradlewiseBinarySensorEntityDescription(
-        key="baby_needs_attention",
-        translation_key="baby_needs_attention",
-        device_class=BinarySensorDeviceClass.PROBLEM,
-        icon="mdi:alert-circle-outline",
-        value_fn=lambda c: c.baby_needs_attention,
-    ),
-    CradlewiseBinarySensorEntityDescription(
-        key="baby_needs_help",
-        translation_key="baby_needs_help",
-        device_class=BinarySensorDeviceClass.PROBLEM,
-        icon="mdi:alert",
-        value_fn=lambda c: c.baby_needs_help,
-    ),
-    CradlewiseBinarySensorEntityDescription(
         key="crib_helping",
         translation_key="crib_helping",
         icon="mdi:hand-heart",
         value_fn=lambda c: c.is_crib_helping,
+    ),
+    CradlewiseBinarySensorEntityDescription(
+        key="active_soothing",
+        translation_key="active_soothing",
+        icon="mdi:hand-heart",
+        value_fn=lambda c: c.active_soothing,
     ),
     CradlewiseBinarySensorEntityDescription(
         key="bouncing",
@@ -80,43 +75,7 @@ BINARY_SENSOR_DESCRIPTIONS: tuple[CradlewiseBinarySensorEntityDescription, ...] 
         icon="mdi:lightbulb",
         value_fn=lambda c: c.light_on,
     ),
-    CradlewiseBinarySensorEntityDescription(
-        key="loud_sound_detected",
-        translation_key="loud_sound_detected",
-        device_class=BinarySensorDeviceClass.SOUND,
-        icon="mdi:volume-high",
-        value_fn=lambda c: c.loud_sound_detected,
-    ),
-    CradlewiseBinarySensorEntityDescription(
-        key="inside_sleep_schedule",
-        translation_key="inside_sleep_schedule",
-        icon="mdi:calendar-clock",
-        value_fn=lambda c: c.inside_sleep_schedule,
-    ),
-    CradlewiseBinarySensorEntityDescription(
-        key="inside_soothing_window",
-        translation_key="inside_soothing_window",
-        icon="mdi:clock-check",
-        value_fn=lambda c: c.inside_soothing_window,
-    ),
-    CradlewiseBinarySensorEntityDescription(
-        key="rocking_not_effective",
-        translation_key="rocking_not_effective",
-        icon="mdi:alert-outline",
-        value_fn=lambda c: c.rocking_not_effective,
-    ),
-    CradlewiseBinarySensorEntityDescription(
-        key="charging",
-        translation_key="charging",
-        device_class=BinarySensorDeviceClass.BATTERY_CHARGING,
-        value_fn=lambda c: c.charging,
-    ),
-    CradlewiseBinarySensorEntityDescription(
-        key="power_supply_removed",
-        translation_key="power_supply_removed",
-        device_class=BinarySensorDeviceClass.PLUG,
-        value_fn=lambda c: not c.supply_removed if c.supply_removed is not None else None,
-    ),
+
 )
 
 

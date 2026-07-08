@@ -4,21 +4,19 @@ from __future__ import annotations
 
 import logging
 from datetime import timedelta
-from typing import Any
 
 from pycradlewise import (
     AppConfig,
     CradlewiseApiError,
     CradlewiseClient,
     CradlewiseCradle,
-    CradlewiseMqtt,
     SleepAnalytics,
 )
 
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
-from .const import DEFAULT_SCAN_INTERVAL, DOMAIN, MQTT_SCAN_INTERVAL
+from .const import DEFAULT_SCAN_INTERVAL, DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -39,12 +37,6 @@ class CradlewiseCoordinator(DataUpdateCoordinator[dict[str, CradlewiseCradle]]):
         self._app_config = app_config
         self.cradles: dict[str, CradlewiseCradle] = {}
         self.analytics: dict[str, SleepAnalytics] = {}
-        self._mqtt = CradlewiseMqtt()
-        self._mqtt_started = False
-
-    @property
-    def mqtt_connected(self) -> bool:
-        return self._mqtt.available
 
     async def _async_setup(self) -> None:
         try:
@@ -52,59 +44,9 @@ class CradlewiseCoordinator(DataUpdateCoordinator[dict[str, CradlewiseCradle]]):
         except CradlewiseApiError as err:
             raise UpdateFailed(f"Failed to discover cradles: {err}") from err
 
-    async def _start_mqtt(self) -> None:
-        if self._mqtt_started:
-            return
-
-        creds = self.client.auth.credentials
-        if not creds or not self.cradles:
-            return
-
-        try:
-            await self._mqtt.connect(
-                access_key=creds.access_key,
-                secret_key=creds.secret_key,
-                session_token=creds.session_token,
-                cradle_ids=list(self.cradles.keys()),
-                on_state_update=self._on_mqtt_state_update,
-                iot_endpoint=self._app_config.iot_endpoint,
-            )
-            self._mqtt_started = True
-
-            if self._mqtt.available:
-                self.update_interval = timedelta(seconds=MQTT_SCAN_INTERVAL)
-                _LOGGER.info(
-                    "MQTT active — REST poll interval set to %ds", MQTT_SCAN_INTERVAL
-                )
-        except Exception:
-            _LOGGER.debug("MQTT setup failed, continuing with REST polling")
-
-    def _on_mqtt_state_update(self, cradle_id: str, state: dict[str, Any]) -> None:
-        cradle = self.cradles.get(cradle_id)
-        if not cradle:
-            return
-        cradle.update_state(state)
-        cradle.online = True
-        self.async_set_updated_data(self.cradles)
-
     async def _async_update_data(self) -> dict[str, CradlewiseCradle]:
         if not self.cradles:
             await self._async_setup()
-
-        if not self._mqtt_started:
-            await self._start_mqtt()
-
-        if self._mqtt_started and not self._mqtt.available:
-            creds = self.client.auth.credentials
-            if creds:
-                await self._mqtt.reconnect(
-                    access_key=creds.access_key,
-                    secret_key=creds.secret_key,
-                    session_token=creds.session_token,
-                    cradle_ids=list(self.cradles.keys()),
-                    on_state_update=self._on_mqtt_state_update,
-                    iot_endpoint=self._app_config.iot_endpoint,
-                )
 
         for cradle in self.cradles.values():
             try:
@@ -122,7 +64,3 @@ class CradlewiseCoordinator(DataUpdateCoordinator[dict[str, CradlewiseCradle]]):
                     _LOGGER.debug("Analytics fetch failed for %s: %s", cradle.baby_id, err)
 
         return self.cradles
-
-    async def async_shutdown(self) -> None:
-        await self._mqtt.disconnect()
-        await super().async_shutdown()
