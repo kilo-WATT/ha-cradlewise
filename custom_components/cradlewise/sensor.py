@@ -205,6 +205,7 @@ ANALYTICS_DESCRIPTIONS: tuple[CradlewiseAnalyticsEntityDescription, ...] = (
         translation_key="weekly_avg_naps_per_day",
         icon="mdi:counter",
         state_class=SensorStateClass.MEASUREMENT,
+        suggested_display_precision=1,
         value_fn=lambda a: a.weekly_avg_naps_per_day,
     ),
     CradlewiseAnalyticsEntityDescription(
