@@ -24,6 +24,7 @@ TO_REDACT = {
     "secret_key",
     "session_token",
     "token",
+    "unique_id",
 }
 
 REST_STATE_FIELDS = {

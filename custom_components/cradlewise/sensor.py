@@ -136,6 +136,7 @@ ANALYTICS_DESCRIPTIONS: tuple[CradlewiseAnalyticsEntityDescription, ...] = (
         key="sleep_saved",
         translation_key="sleep_saved",
         icon="mdi:sleep",
+        entity_registry_enabled_default=False,
         value_fn=lambda a: a.sleep_saved,
     ),
     CradlewiseAnalyticsEntityDescription(
@@ -149,30 +150,35 @@ ANALYTICS_DESCRIPTIONS: tuple[CradlewiseAnalyticsEntityDescription, ...] = (
         key="rise_time_analytics",
         translation_key="rise_time",
         icon="mdi:weather-sunset-up",
+        entity_registry_enabled_default=False,
         value_fn=lambda a: a.rise_time,
     ),
     CradlewiseAnalyticsEntityDescription(
         key="bed_time",
         translation_key="bed_time",
         icon="mdi:weather-sunset-down",
+        entity_registry_enabled_default=False,
         value_fn=lambda a: a.bed_time,
     ),
     CradlewiseAnalyticsEntityDescription(
         key="time_in_bed",
         translation_key="time_in_bed",
         icon="mdi:bed-clock",
+        entity_registry_enabled_default=False,
         value_fn=lambda a: a.time_in_bed,
     ),
     CradlewiseAnalyticsEntityDescription(
         key="longest_stretch",
         translation_key="longest_stretch",
         icon="mdi:trophy",
+        entity_registry_enabled_default=False,
         value_fn=lambda a: a.longest_stretch,
     ),
     CradlewiseAnalyticsEntityDescription(
         key="awake_in_bed",
         translation_key="awake_in_bed",
         icon="mdi:eye",
+        entity_registry_enabled_default=False,
         value_fn=lambda a: a.awake_in_bed,
     ),
     # Weekly Aggregates
