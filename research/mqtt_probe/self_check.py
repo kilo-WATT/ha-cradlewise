@@ -10,7 +10,9 @@ from typing import Any
 from .auth_probe import _require_environment_credentials
 from .provisioning_probe import (
     _build_live_provisioning_payload,
+    _normalize_discovered_cradles,
     _response_structure,
+    _safe_failure_report,
     build_provisioning_request_shape,
     validate_provisioning_request_shape,
 )
@@ -145,6 +147,58 @@ def _check_empty_cradles_block() -> dict[str, str]:
     )
 
 
+def _check_dict_cradles_normalize() -> dict[str, str]:
+    cradles = _normalize_discovered_cradles(
+        {
+            "redacted_key": {"babyId": "redacted"},
+            "another_redacted_key": {"babyId": "redacted"},
+        }
+    )
+    if len(cradles) != 2:
+        raise SafetyError("self_check_failed")
+    return {"result": "passed", "category": "dict_cradles_normalize"}
+
+
+def _check_empty_dict_cradles_block() -> dict[str, str]:
+    return _expect_safety_error(
+        "no_cradles_discovered",
+        lambda: _build_live_provisioning_payload(
+            email="redacted@example.invalid",
+            cradles=_normalize_discovered_cradles({}),
+        ),
+    )
+
+
+def _check_unexpected_cradle_shape_does_not_crash() -> dict[str, str]:
+    return _expect_safety_error(
+        "missing_baby_id_for_provisioning",
+        lambda: _build_live_provisioning_payload(
+            email="redacted@example.invalid",
+            cradles=_normalize_discovered_cradles(object()),
+        ),
+    )
+
+
+def _check_failure_report_after_post_attempt() -> dict[str, str]:
+    import research.mqtt_probe.provisioning_probe as provisioning_probe
+
+    original_count = provisioning_probe._PROVISIONING_REQUESTS_THIS_RUN
+    try:
+        provisioning_probe._PROVISIONING_REQUESTS_THIS_RUN = 1
+        report = _safe_failure_report("SomeError", "after_provisioning_request")
+        if report["provisioning_request_attempted"] is not True:
+            raise SafetyError("self_check_failed")
+        if report["provisioning_request_count"] != 1:
+            raise SafetyError("self_check_failed")
+    finally:
+        provisioning_probe._PROVISIONING_REQUESTS_THIS_RUN = original_count
+
+    return {
+        "result": "passed",
+        "category": "failure_report_after_post_attempt",
+    }
+
+
 def _check_live_gate(
     category: str,
     *,
@@ -176,8 +230,12 @@ def run_self_checks() -> dict[str, Any]:
             _check_provisioning_shape(),
             _check_provisioning_response_structure(),
             _check_desired_state_rejection(),
+            _check_dict_cradles_normalize(),
             _check_empty_cradles_block(),
+            _check_empty_dict_cradles_block(),
             _check_missing_baby_id_blocks(),
+            _check_unexpected_cradle_shape_does_not_crash(),
+            _check_failure_report_after_post_attempt(),
             _expect_safety_error(
                 "identifier_cli_argument_rejected",
                 lambda: reject_secret_arguments(["person@example.com"]),

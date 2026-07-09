@@ -103,7 +103,9 @@ def _safe_failure_report(
         "app_config_present": app_config_present,
         "auth_success": auth_success,
         "cradle_count": cradle_count,
-        "provisioning_request_attempted": stage == "provisioning_request",
+        "provisioning_request_attempted": (
+            stage == "provisioning_request" or _PROVISIONING_REQUESTS_THIS_RUN > 0
+        ),
         "provisioning_request_count": _PROVISIONING_REQUESTS_THIS_RUN,
         "response_structure": _empty_response_structure(),
         "result": "failed",
@@ -205,6 +207,19 @@ def _response_structure(response: Any) -> dict[str, Any]:
 def _extract_identifier(value: Any, *names: str) -> Any:
     mapping = _object_to_safe_mapping(value)
     return _mapping_get(mapping, *names)
+
+
+def _normalize_discovered_cradles(value: Any) -> list[Any]:
+    """Normalize discovered cradle containers without exposing keys."""
+    if isinstance(value, list):
+        return value
+    if isinstance(value, tuple):
+        return list(value)
+    if isinstance(value, dict):
+        return list(value.values())
+    if value:
+        return [value]
+    return []
 
 
 def _build_live_provisioning_payload(
@@ -339,7 +354,6 @@ async def _live_provisioning_inspection_async() -> dict[str, Any]:
             client.discover_cradles(),
             "discover_cradles",
         )
-        cradle_count = len(cradles)
     except SafetyError as error:
         if error.category == "timeout:discover_cradles":
             return _safe_failure_report(
@@ -358,10 +372,30 @@ async def _live_provisioning_inspection_async() -> dict[str, Any]:
         )
 
     try:
+        cradles = _normalize_discovered_cradles(cradles)
+    except Exception as error:
+        return _safe_failure_report(
+            normalized_error_category(error),
+            "normalize_discovered_cradles",
+            app_config_present=app_config is not None,
+            auth_success=True,
+        )
+
+    cradle_count = len(cradles)
+
+    try:
         payload = _build_live_provisioning_payload(email=email, cradles=cradles)
     except SafetyError as error:
         return _safe_failure_report(
             error.category,
+            "build_provisioning_payload",
+            app_config_present=app_config is not None,
+            auth_success=True,
+            cradle_count=cradle_count,
+        )
+    except Exception as error:
+        return _safe_failure_report(
+            normalized_error_category(error),
             "build_provisioning_payload",
             app_config_present=app_config is not None,
             auth_success=True,
@@ -417,4 +451,19 @@ async def _live_provisioning_inspection_async() -> dict[str, Any]:
 
 def live_provisioning_inspection() -> dict[str, Any]:
     """Run explicitly approved provisioning-response inspection only."""
-    return asyncio.run(_live_provisioning_inspection_async())
+    try:
+        return asyncio.run(_live_provisioning_inspection_async())
+    except SafetyError as error:
+        return redact(
+            _safe_failure_report(
+                error.category,
+                "provisioning_inspection",
+            )
+        )
+    except Exception as error:
+        return redact(
+            _safe_failure_report(
+                normalized_error_category(error),
+                "provisioning_inspection",
+            )
+        )
