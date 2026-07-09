@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+import os
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from typing import Any
 
+from .auth_probe import _require_environment_credentials
 from .provisioning_probe import (
     build_provisioning_request_shape,
     validate_provisioning_request_shape,
@@ -32,6 +35,32 @@ def _expect_safety_error(
         return {"result": "passed", "category": category}
 
     raise SafetyError("self_check_failed")
+
+
+@contextmanager
+def _without_cradlewise_credentials() -> Iterator[None]:
+    original_email = os.environ.pop("CRADLEWISE_EMAIL", None)
+    original_password = os.environ.pop("CRADLEWISE_PASSWORD", None)
+    try:
+        yield
+    finally:
+        if original_email is not None:
+            os.environ["CRADLEWISE_EMAIL"] = original_email
+        else:
+            os.environ.pop("CRADLEWISE_EMAIL", None)
+
+        if original_password is not None:
+            os.environ["CRADLEWISE_PASSWORD"] = original_password
+        else:
+            os.environ.pop("CRADLEWISE_PASSWORD", None)
+
+
+def _check_missing_live_auth_credentials() -> dict[str, str]:
+    with _without_cradlewise_credentials():
+        return _expect_safety_error(
+            "missing_live_auth_credentials",
+            _require_environment_credentials,
+        )
 
 
 def _check_redaction() -> dict[str, str]:
@@ -81,6 +110,19 @@ def run_self_checks() -> dict[str, Any]:
                 "secret_cli_argument_rejected",
                 lambda: reject_secret_arguments(["--password=secret"]),
             ),
+            _expect_safety_error(
+                "secret_cli_argument_rejected",
+                lambda: reject_secret_arguments(
+                    ["--allow-live-auth", "--email=user@example.com"]
+                ),
+            ),
+            _expect_safety_error(
+                "identifier_cli_argument_rejected",
+                lambda: reject_secret_arguments(
+                    ["--allow-live-auth", "user@example.com"]
+                ),
+            ),
+            _check_missing_live_auth_credentials(),
             _expect_safety_error(
                 "certificate_download_disabled",
                 certificate_download_disabled,

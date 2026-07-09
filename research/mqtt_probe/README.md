@@ -67,6 +67,20 @@ Run local safety self-checks:
 python -m research.mqtt_probe self-check
 ```
 
+## Future live-authentication-only probe
+
+Live authentication is blocked unless explicitly requested. It reads credentials
+only from environment variables and never prints credential values:
+
+```shell
+CRADLEWISE_EMAIL='user@example.com' CRADLEWISE_PASSWORD='...' \
+  python -m research.mqtt_probe live-auth --allow-live-auth --json
+```
+
+This command may authenticate and perform safe account discovery only. It must
+not provision certificates, access S3, connect to MQTT, subscribe, publish, or
+send crib controls.
+
 ## Explicitly unsupported
 
 The scaffold intentionally has no options for:
@@ -83,10 +97,11 @@ A true AWS IoT shadow GET requires an MQTT publish to the shadow GET topic. That
 operation remains outside this scaffold.
 
 Any future live phase requires separate approval and must preserve dry-run as the
-default. Future live phases must require explicit flags in addition to a command;
-this scaffold reserves those flags but blocks them:
+default. Future live phases must require explicit flags in addition to a command.
+Provisioning remains reserved and blocked:
 
 ```shell
-python -m research.mqtt_probe --live-auth
+python -m research.mqtt_probe live-auth
+python -m research.mqtt_probe live-auth --email user@example.com
 python -m research.mqtt_probe --live-provisioning
 ```

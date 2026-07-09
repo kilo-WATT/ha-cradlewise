@@ -8,7 +8,7 @@ import sys
 from collections.abc import Sequence
 from typing import Any
 
-from .auth_probe import authentication_preview
+from .auth_probe import authentication_preview, live_authentication_probe
 from .provisioning_probe import provisioning_preview
 from .redaction import redact
 from .safety import (
@@ -27,7 +27,13 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "command",
         nargs="?",
-        choices=("all", "auth-preview", "provisioning-preview", "self-check"),
+        choices=(
+            "all",
+            "auth-preview",
+            "provisioning-preview",
+            "self-check",
+            "live-auth",
+        ),
         default="all",
     )
     parser.add_argument(
@@ -36,11 +42,9 @@ def _parser() -> argparse.ArgumentParser:
         help="Emit safe JSON output.",
     )
     parser.add_argument(
-        "--live-auth",
+        "--allow-live-auth",
         action="store_true",
-        help=(
-            "Reserved for a separately approved future phase; currently blocked."
-        ),
+        help="Allow the live-auth command to perform authentication only.",
     )
     parser.add_argument(
         "--live-provisioning",
@@ -52,11 +56,15 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _run(command: str) -> dict[str, Any]:
+def _run(command: str, *, allow_live_auth: bool) -> dict[str, Any]:
     report: dict[str, Any] = {
-        "mode": "dry_run",
-        "network_enabled": False,
+        "mode": "live_auth" if command == "live-auth" else "dry_run",
+        "network_enabled": command == "live-auth" and allow_live_auth,
     }
+
+    if command == "live-auth":
+        report["authentication"] = live_authentication_probe()
+        return redact(report)
 
     if command == "self-check":
         report["self_check"] = run_self_checks()
@@ -77,11 +85,17 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         reject_secret_arguments(arguments)
         args = _parser().parse_args(arguments)
-        if args.live_auth or args.live_provisioning:
+        live_auth_requested = args.command == "live-auth"
+        if args.live_provisioning:
             raise SafetyError("live_action_not_implemented")
-        assert_dry_run(True)
-        install_network_guard()
-        report = _run(args.command)
+        if args.allow_live_auth and not live_auth_requested:
+            raise SafetyError("live_auth_flag_without_command")
+        if live_auth_requested and not args.allow_live_auth:
+            raise SafetyError("live_auth_explicit_flag_required")
+        if not live_auth_requested:
+            assert_dry_run(True)
+            install_network_guard()
+        report = _run(args.command, allow_live_auth=args.allow_live_auth)
     except SafetyError as error:
         print(
             json.dumps(
