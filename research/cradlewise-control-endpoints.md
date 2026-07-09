@@ -429,6 +429,97 @@ controls were sent. No credentials, tokens, certificates, keys, identifiers, raw
 responses, URLs, headers, exception messages, logs, bucket names, or object names
 were recorded in this note.
 
+### Static provisioning request-shape evidence
+
+Offline static-search output gives a stronger explanation for the HTTP 400
+provisioning-inspect result. The Android app does not build the
+`POST /cradles/pairedUsers/v3` request with the snake_case field names used by
+the first probe. It constructs a typed `GetDeviceCertV3Request` object.
+
+Current probe payload shape, redacted:
+
+```json
+{
+  "baby_id": "<redacted>",
+  "email": "<redacted>",
+  "fcm_token": null,
+  "device": {
+    "app_version": "research-probe",
+    "device_name": "research-probe",
+    "os": "python",
+    "os_version": "unknown"
+  }
+}
+```
+
+APK-observed top-level request model:
+
+| Field | APK model/type evidence | Current probe field | Confidence | Notes |
+|---|---|---|---|---|
+| `emailId` | `GetDeviceCertV3Request.emailId: String` | `email` | High | The app model uses camelCase `emailId`, not `email`. Treat as identifying and redact in all output. |
+| `babyId` | `GetDeviceCertV3Request.babyId: BigDecimal` | `baby_id` string/object value from discovery | High | The app model uses camelCase `babyId` and a numeric `BigDecimal` type, not snake_case `baby_id`. Treat as identifying and redact. |
+| `fcmToken` | `GetDeviceCertV3Request.fcmToken: String` | `fcm_token: null` | High for field name/type; medium for runtime requirement | The Kotlin metadata shows a non-null `String` constructor parameter. A null FCM token is a likely 400 cause, but the server-side requirement is not proven. |
+| `device` | `GetDeviceCertV3Request.device: DeviceInfoCert` | `device` with guessed snake_case keys | High for wrapper; low for nested key details from the saved output | The wrapper is verified. The saved static-search output did not include enough `DeviceInfoCert` body detail to prove all nested JSON names. |
+| `cradleId` | Not present in `GetDeviceCertV3Request` constructor evidence | Not sent | High that it is not a top-level field in this request model | Cradle association may be inferred server-side from `babyId`, role/account context, or the device assignment flow. |
+| `roleId` / `userId` | Not present in `GetDeviceCertV3Request` constructor evidence | Not sent | Medium | These identifiers appear in response/association context elsewhere, but not as verified top-level request fields here. |
+| Additional wrapper object | No wrapper around `GetDeviceCertV3Request` was observed | None | Medium | The app constructs the request DTO directly before calling the endpoint. |
+| Headers/content type | No provisioning-specific header evidence found in the saved static-search output | Normal pycradlewise JSON request | Low | No special content type was proven. This remains a follow-up item if full decompiled sources are available. |
+
+Exact evidence references from `apk-analysis-output/cradlewise-search-results.txt`:
+
+- `apktool-out/smali_classes11/com/cradlewise/nini/core/mqtt/api/MqttBackendService$fetchDeviceCertsV3$2.smali`
+  lines 16250-16254: loads `emailId`, `babyId`, `fcmToken`, and `device`, then
+  constructs `GetDeviceCertV3Request(String, BigDecimal, String, DeviceInfoCert)`.
+- Same file line 16262: uses endpoint path `/cradles/pairedUsers/v3`.
+- `apktool-out/smali_classes11/com/cradlewise/nini/core/mqtt/api/model/GetDeviceCertV3Request.smali`
+  lines 16303-16306: stores fields named `emailId`, `babyId`, `fcmToken`, and
+  `device`.
+- `jadx-out/sources/com/cradlewise/nini/core/mqtt/api/model/GetDeviceCertV3Request.java`
+  line 19806: Kotlin metadata names the constructor parameters and types:
+  `emailId: String`, `babyId: BigDecimal`, `fcmToken: String`, and
+  `device: DeviceInfoCert`.
+- `jadx-out/sources/com/cradlewise/nini/core/mqtt/api/model/GetDeviceCertV3Request.java`
+  lines 19814 and 19820: decompiled copy/constructor signatures repeat the
+  same four-argument shape.
+- `apktool-out/smali_classes11/com/cradlewise/nini/app/usecases/GetDeviceCertificatesUseCaseImpl.smali`
+  line 28797 and `apktool-out/smali_classes11/com/cradlewise/nini/core/mqtt/repository/MqttRepository.smali`
+  line 14257: app/repository call sites invoke
+  `MqttBackendService.fetchDeviceCertsV3(String, String, String, DeviceInfoCert, ...)`.
+
+Likely reasons the current probe received HTTP 400:
+
+1. Top-level field names are wrong: `email`/`baby_id`/`fcm_token` should be
+   `emailId`/`babyId`/`fcmToken`.
+2. `babyId` may need to be serialized as the numeric value used by the app
+   model, not as a string-like identifier.
+3. `fcmToken` was sent as null even though the app request model expects a
+   non-null string.
+4. The `device` object was guessed. Its snake_case keys are not verified as
+   matching `DeviceInfoCert`.
+5. The app may generate or persist a stable backend device identity before
+   provisioning. The saved search output confirms a `DeviceInfoCert` parameter
+   but does not prove the nested fields needed to recreate it safely.
+
+Proposed corrected redacted payload shape for a future probe, not yet
+implemented:
+
+```json
+{
+  "emailId": "<redacted-email-like-identifier>",
+  "babyId": "<redacted-numeric-baby-id>",
+  "fcmToken": "<redacted-fcm-token-or-safe-test-equivalent-if-proven-valid>",
+  "device": {
+    "<DeviceInfoCert field names>": "<redacted values; unresolved from saved output>"
+  }
+}
+```
+
+Do not run another live provisioning test until the `DeviceInfoCert` constructor,
+serializer annotations, and the app's backend device-ID generation path are
+verified from fuller decompiled material. The current evidence is sufficient to
+say the first probe payload shape was wrong, but not sufficient to safely
+construct the complete `DeviceInfoCert` body.
+
 ### Credential scope
 
 The strongest supported interpretation is that an IoT identity is scoped to an
