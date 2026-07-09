@@ -644,6 +644,42 @@ already-extracted APK. It has not been sent over the network. Do not run it
 without separate explicit approval, per the research constraints in this
 document.
 
+### Corrected gated provisioning payload builder (research/mqtt_probe)
+
+The `research/mqtt_probe` scaffold now builds the corrected, statically
+confirmed provisioning request instead of the earlier wrong snake_case body.
+This is payload-construction code only; it has **not** been run live.
+
+- The live payload builder emits the confirmed `GetDeviceCertV3Request` shape:
+  `emailId` (string), `babyId` (JSON number, converted from the discovered
+  identifier before POST), `fcmToken` (string), and `device`.
+- The `device` object uses the confirmed 9-field `DeviceInfoCert` shape:
+  `registrationDate`, `appVersion`, `country`, `os`, `deviceName`,
+  `osVersion`, `timezone`, `type`, `resolution`, in constructor order.
+- `country` and `os` are the two statically confirmed hardcoded literals
+  (`"IN"`, `"android"`). Every other `device` value and the `fcmToken` are
+  read only from explicit, safe environment variables — nothing is invented
+  silently.
+- The builder blocks before any POST if required inputs are missing:
+  `missing_fcm_token_for_provisioning` when `CRADLEWISE_FCM_TOKEN` is absent,
+  and `missing_device_info_for_provisioning` when any required
+  `CRADLEWISE_DEVICE_*` value is absent.
+- The builder remains behind the existing triple gate. Live provisioning
+  still requires all of `--allow-live-auth`, `--allow-live-provisioning`, and
+  `--acknowledge-provisioning-side-effect`; without the acknowledgement the
+  command blocks with `provisioning_side_effect_ack_required` before any
+  network activity.
+- All probe output remains redacted. `emailId`, `babyId`, and `fcmToken`
+  redact to the fixed marker in any emitted structure; the built payload
+  itself is never placed in a report.
+
+A future corrected live provisioning attempt would require env-provided FCM
+and device metadata (`CRADLEWISE_FCM_TOKEN` and the `CRADLEWISE_DEVICE_*`
+variables) and separate explicit approval to pass the triple gate. No
+certificate download, S3 access, MQTT connection, shadow get/update, or crib
+control code has been added; the scaffold remains limited to the gated
+provisioning-inspect path.
+
 ### Credential scope
 
 The strongest supported interpretation is that an IoT identity is scoped to an
