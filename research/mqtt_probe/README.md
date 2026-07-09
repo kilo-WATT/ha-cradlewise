@@ -61,6 +61,12 @@ Machine-readable output:
 python -m research.mqtt_probe --json
 ```
 
+Run local safety self-checks:
+
+```shell
+python -m research.mqtt_probe self-check
+```
+
 ## Explicitly unsupported
 
 The scaffold intentionally has no options for:
@@ -77,4 +83,10 @@ A true AWS IoT shadow GET requires an MQTT publish to the shadow GET topic. That
 operation remains outside this scaffold.
 
 Any future live phase requires separate approval and must preserve dry-run as the
-default.
+default. Future live phases must require explicit flags in addition to a command;
+this scaffold reserves those flags but blocks them:
+
+```shell
+python -m research.mqtt_probe --live-auth
+python -m research.mqtt_probe --live-provisioning
+```

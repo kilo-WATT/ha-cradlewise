@@ -17,6 +17,7 @@ from .safety import (
     install_network_guard,
     reject_secret_arguments,
 )
+from .self_check import run_self_checks
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -26,13 +27,27 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "command",
         nargs="?",
-        choices=("all", "auth-preview", "provisioning-preview"),
+        choices=("all", "auth-preview", "provisioning-preview", "self-check"),
         default="all",
     )
     parser.add_argument(
         "--json",
         action="store_true",
         help="Emit safe JSON output.",
+    )
+    parser.add_argument(
+        "--live-auth",
+        action="store_true",
+        help=(
+            "Reserved for a separately approved future phase; currently blocked."
+        ),
+    )
+    parser.add_argument(
+        "--live-provisioning",
+        action="store_true",
+        help=(
+            "Reserved for a separately approved future phase; currently blocked."
+        ),
     )
     return parser
 
@@ -42,6 +57,9 @@ def _run(command: str) -> dict[str, Any]:
         "mode": "dry_run",
         "network_enabled": False,
     }
+
+    if command == "self-check":
+        report["self_check"] = run_self_checks()
 
     if command in {"all", "auth-preview"}:
         report["authentication"] = authentication_preview()
@@ -59,6 +77,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         reject_secret_arguments(arguments)
         args = _parser().parse_args(arguments)
+        if args.live_auth or args.live_provisioning:
+            raise SafetyError("live_action_not_implemented")
         assert_dry_run(True)
         install_network_guard()
         report = _run(args.command)

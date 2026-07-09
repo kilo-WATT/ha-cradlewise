@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import socket
 from collections.abc import Mapping, Sequence
 from typing import Any, NoReturn
@@ -22,6 +23,16 @@ _SECRET_ARGUMENT_NAMES = {
     "--token",
 }
 
+_SECRET_ARGUMENT_PREFIXES = (
+    "email=",
+    "password=",
+    "token=",
+    "authorization=",
+)
+_EMAIL_ARGUMENT_PATTERN = re.compile(r"(?i)[\w.+-]+@[\w.-]+\.[a-z]{2,}")
+_AWS_KEY_ARGUMENT_PATTERN = re.compile(r"\b(?:AKIA|ASIA)[A-Z0-9]{16}\b")
+_PEM_ARGUMENT_PATTERN = re.compile(r"-----BEGIN [^-]+-----")
+
 
 class SafetyError(RuntimeError):
     """A normalized safety failure without sensitive details."""
@@ -40,8 +51,17 @@ def assert_dry_run(enabled: bool) -> None:
 def reject_secret_arguments(arguments: Sequence[str]) -> None:
     """Reject credentials and identifiers supplied through command arguments."""
     for argument in arguments:
-        name = argument.split("=", 1)[0].lower()
+        lowered = argument.lower()
+        name = lowered.split("=", 1)[0]
         if name in _SECRET_ARGUMENT_NAMES:
+            raise SafetyError("secret_cli_argument_rejected")
+        if any(lowered.startswith(prefix) for prefix in _SECRET_ARGUMENT_PREFIXES):
+            raise SafetyError("secret_cli_argument_rejected")
+        if _EMAIL_ARGUMENT_PATTERN.search(argument):
+            raise SafetyError("identifier_cli_argument_rejected")
+        if _AWS_KEY_ARGUMENT_PATTERN.search(argument):
+            raise SafetyError("secret_cli_argument_rejected")
+        if _PEM_ARGUMENT_PATTERN.search(argument):
             raise SafetyError("secret_cli_argument_rejected")
 
 
