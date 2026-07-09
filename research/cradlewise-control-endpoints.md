@@ -380,12 +380,12 @@ messages were recorded in this note.
 
 ### Live provisioning-inspect probe result
 
-A gated `research/mqtt_probe` provisioning-inspect probe was run from a
+A gated `research/mqtt_probe` provisioning-inspect probe was run twice from a
 disposable Debian LXC research environment. The probe used credentials only from
 environment variables. The environment variables were unset immediately after the
-run.
+run in both cases.
 
-Result summary:
+Latest result summary, with safe HTTP status metadata:
 
 | Field | Result |
 |---|---|
@@ -397,6 +397,8 @@ Result summary:
 | `cradle_count` | `1` |
 | `provisioning_request_attempted` | `true` |
 | `provisioning_request_count` | `1` |
+| `http_status` | `400` |
+| `http_status_class` | `4xx` |
 
 Redacted response-structure summary:
 
@@ -411,12 +413,21 @@ Redacted response-structure summary:
 | `role_association_present` | `false` |
 | `baby_association_present` | `false` |
 
-The probe attempted `POST /cradles/pairedUsers/v3` exactly once, and it failed
-before any certificate/storage/MQTT phase. No certificate download occurred, no
-S3 access occurred, no MQTT connect/subscribe/publish occurred, no shadow
-get/update occurred, and no crib controls were sent. No credentials, tokens,
-certificates, keys, identifiers, raw responses, URLs, headers, exception
-messages, logs, or object names were recorded in this note.
+Each probe run attempted `POST /cradles/pairedUsers/v3` at most once. In the
+latest run, the request was attempted exactly once and failed before any
+certificate/storage/MQTT phase. The endpoint was reachable after successful
+authentication. The latest failure was HTTP 400 Bad Request, not 401/403, which
+suggests the current research payload shape, body fields, or app-device context
+is invalid or incomplete.
+
+This does not prove MQTT/control is impossible. It also does not prove
+certificate provisioning is safe or reusable from a non-app client.
+
+No certificate download occurred, no S3 access occurred, no MQTT
+connect/subscribe/publish occurred, no shadow get/update occurred, and no crib
+controls were sent. No credentials, tokens, certificates, keys, identifiers, raw
+responses, URLs, headers, exception messages, logs, bucket names, or object names
+were recorded in this note.
 
 ### Credential scope
 
@@ -441,7 +452,7 @@ cannot be proven from the APK.
 | Cognito-derived IAM credentials | Cognito Identity Pool | API Gateway SigV4 in pycradlewise; Amplify services in app | Yes for REST/auth discovery; IoT permissions remain unproven | pycradlewise `auth.py:_exchange_for_iam`, `client.py:_api_request`; live-auth-only probe reached app config/auth/discovery successfully | High for REST/auth discovery; unknown for IoT | Their effective IoT permissions are unknown; possession does not prove MQTT authorization |
 | IoT endpoint/region | App DEX constant | AWS IoT broker selection | Yes; public configuration, already extracted | APK `RemoteMqttConnectionV2.connect`; pycradlewise `bootstrap.py:_extract_iot_endpoint` | High | Endpoint correctness alone does not grant access |
 | Backend app-device ID | Backend device registration/local repository | Device assignment and certificate provisioning; likely MQTT client ID | Not safely established for HA without a supported registration lifecycle | `GeneralRepository.getDeviceId`; `GetDeviceCertificatesUseCaseImpl.invoke`; `DeviceConfig.deviceId` | High for provisioning use; medium for client-ID mapping | Registering another client may consume a device slot or alter assignment state |
-| Provisioning REST call | Authenticated app REST API | Requests IoT device configuration | Endpoint was reached once by the gated research probe but returned `ClientResponseError`; response structure was empty in the safe summary | `MqttBackendService.fetchDeviceCertsV3$2.invokeSuspend`; POST `/cradles/pairedUsers/v3`; gated provisioning-inspect result | High that endpoint exists; low that HA can safely reuse it | Requires app-specific device/FCM/account context and has assignment/limit side effects |
+| Provisioning REST call | Authenticated app REST API | Requests IoT device configuration | Endpoint was reachable after auth but returned HTTP 400 with the current research payload/context; response structure was empty in the safe summary | `MqttBackendService.fetchDeviceCertsV3$2.invokeSuspend`; POST `/cradles/pairedUsers/v3`; gated provisioning-inspect result | High that endpoint exists; low that HA can safely reuse it | Requires app-specific device/FCM/account context and has assignment/limit side effects |
 | S3 object metadata | `DeviceConfig` response | Locates certificate and private-key files | Only after successful provisioning and authorized Storage access | `DeviceConfig.getS3Bucket/getS3ObjectKeys`; `CertificateUtilsV3.downloadCertificates` | High | Metadata and downloaded material are sensitive; authorization may be narrowly scoped |
 | X.509 client certificate | Server-selected S3 object | Mutual-TLS MQTT authentication | Not currently available to HA without provisioning; phone extraction is neither required nor recommended | `CertificateUtilsV3.downloadCertificates`, `saveCertificatesAndPrivateKey`; `AWSIotKeystoreHelper` | High | Long-lived device credential; compromise may enable crib control |
 | RSA private key | Server-selected S3 object | Mutual-TLS proof of possession | Same as certificate: only through a supported provisioning flow | `CertificateUtilsV3.generatePrivateKeyFromString`; `saveCertificatesAndPrivateKey` | High | Highest-sensitivity artifact; requires encrypted storage, rotation, and revocation handling |
@@ -466,8 +477,9 @@ cannot be proven from the APK.
 Home Assistant MQTT control is not proven impossible, and extracting credentials
 from a phone should not be part of any design. The APK exposes a legitimate
 server provisioning path. However, a gated research call to that provisioning
-path failed with `ClientResponseError` and did not return device configuration
-structure. It is not yet safe to call from HA because its device-registration and
+path failed with HTTP 400 and did not return device configuration structure. That
+points to an invalid or incomplete research payload/context rather than
+authorization failure. It is not yet safe to call from HA because its device-registration and
 FCM semantics, quota impact, certificate rotation, and revocation behavior are
 unknown.
 
@@ -482,8 +494,8 @@ cannot resolve that. The best current classification is:
 
 1. Keep Home Assistant REST-only and do not add integration MQTT/control code.
 2. Do not retry `/cradles/pairedUsers/v3` from the harness until the
-   `ClientResponseError` category can be investigated without exposing raw
-   response data or identifiers.
+   HTTP 400 can be investigated without exposing raw response data, URLs,
+   headers, identifiers, or other sensitive material.
 3. Continue to avoid Storage, certificate download, IoT/MQTT connect, MQTT
    subscribe, MQTT publish, shadow get/update, and crib controls.
 4. Before any further provisioning work, document the expected lifecycle for a new HA app-device
