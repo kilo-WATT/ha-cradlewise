@@ -3,9 +3,9 @@
 ## Scope and provenance
 
 This note records offline static analysis of `Cradlewise_2.57.8_APKPure.xapk`,
-plus the explicitly noted live-auth-only probe result below. Except for that
-gated authentication probe, no application code was executed, no network requests
-were made, and no credentials or live devices were used.
+plus the explicitly noted gated live probe results below. Except for those gated
+research probes, no application code was executed, no network requests were made,
+and no credentials or live devices were used.
 
 - XAPK SHA-256: `70F333259FAA45F14D2E6064F4D5C2E1E4370604CD431A8EBE500E04CFA2D7F9`
 - Base APK: `com.cradlewise.nini.app.apk`
@@ -378,6 +378,46 @@ did not connect/subscribe/publish over MQTT, and did not send crib commands. No
 credentials, tokens, certificates, keys, identifiers, raw responses, or exception
 messages were recorded in this note.
 
+### Live provisioning-inspect probe result
+
+A gated `research/mqtt_probe` provisioning-inspect probe was run from a
+disposable Debian LXC research environment. The probe used credentials only from
+environment variables. The environment variables were unset immediately after the
+run.
+
+Result summary:
+
+| Field | Result |
+|---|---|
+| `result` | `failed` |
+| `failure_category` | `ClientResponseError` |
+| `failure_stage` | `provisioning_request` |
+| `app_config_present` | `true` |
+| `auth_success` | `true` |
+| `cradle_count` | `1` |
+| `provisioning_request_attempted` | `true` |
+| `provisioning_request_count` | `1` |
+
+Redacted response-structure summary:
+
+| Response structure field | Result |
+|---|---|
+| `deviceConfig_present` | `false` |
+| `s3Bucket_present` | `false` |
+| `s3ObjectKeys_count` | `0` |
+| `deviceId_present` | `false` |
+| `cradleId_present` | `false` |
+| `groupCaCert_present` | `false` |
+| `role_association_present` | `false` |
+| `baby_association_present` | `false` |
+
+The probe attempted `POST /cradles/pairedUsers/v3` exactly once, and it failed
+before any certificate/storage/MQTT phase. No certificate download occurred, no
+S3 access occurred, no MQTT connect/subscribe/publish occurred, no shadow
+get/update occurred, and no crib controls were sent. No credentials, tokens,
+certificates, keys, identifiers, raw responses, URLs, headers, exception
+messages, logs, or object names were recorded in this note.
+
 ### Credential scope
 
 The strongest supported interpretation is that an IoT identity is scoped to an
@@ -401,7 +441,7 @@ cannot be proven from the APK.
 | Cognito-derived IAM credentials | Cognito Identity Pool | API Gateway SigV4 in pycradlewise; Amplify services in app | Yes for REST/auth discovery; IoT permissions remain unproven | pycradlewise `auth.py:_exchange_for_iam`, `client.py:_api_request`; live-auth-only probe reached app config/auth/discovery successfully | High for REST/auth discovery; unknown for IoT | Their effective IoT permissions are unknown; possession does not prove MQTT authorization |
 | IoT endpoint/region | App DEX constant | AWS IoT broker selection | Yes; public configuration, already extracted | APK `RemoteMqttConnectionV2.connect`; pycradlewise `bootstrap.py:_extract_iot_endpoint` | High | Endpoint correctness alone does not grant access |
 | Backend app-device ID | Backend device registration/local repository | Device assignment and certificate provisioning; likely MQTT client ID | Not safely established for HA without a supported registration lifecycle | `GeneralRepository.getDeviceId`; `GetDeviceCertificatesUseCaseImpl.invoke`; `DeviceConfig.deviceId` | High for provisioning use; medium for client-ID mapping | Registering another client may consume a device slot or alter assignment state |
-| Provisioning REST call | Authenticated app REST API | Requests IoT device configuration | Technically reachable through signed REST, but not safely reusable yet | `MqttBackendService.fetchDeviceCertsV3$2.invokeSuspend`; POST `/cradles/pairedUsers/v3` | High | Requires app-specific device/FCM/account context and has assignment/limit side effects |
+| Provisioning REST call | Authenticated app REST API | Requests IoT device configuration | Endpoint was reached once by the gated research probe but returned `ClientResponseError`; response structure was empty in the safe summary | `MqttBackendService.fetchDeviceCertsV3$2.invokeSuspend`; POST `/cradles/pairedUsers/v3`; gated provisioning-inspect result | High that endpoint exists; low that HA can safely reuse it | Requires app-specific device/FCM/account context and has assignment/limit side effects |
 | S3 object metadata | `DeviceConfig` response | Locates certificate and private-key files | Only after successful provisioning and authorized Storage access | `DeviceConfig.getS3Bucket/getS3ObjectKeys`; `CertificateUtilsV3.downloadCertificates` | High | Metadata and downloaded material are sensitive; authorization may be narrowly scoped |
 | X.509 client certificate | Server-selected S3 object | Mutual-TLS MQTT authentication | Not currently available to HA without provisioning; phone extraction is neither required nor recommended | `CertificateUtilsV3.downloadCertificates`, `saveCertificatesAndPrivateKey`; `AWSIotKeystoreHelper` | High | Long-lived device credential; compromise may enable crib control |
 | RSA private key | Server-selected S3 object | Mutual-TLS proof of possession | Same as certificate: only through a supported provisioning flow | `CertificateUtilsV3.generatePrivateKeyFromString`; `saveCertificatesAndPrivateKey` | High | Highest-sensitivity artifact; requires encrypted storage, rotation, and revocation handling |
@@ -425,9 +465,11 @@ cannot be proven from the APK.
 
 Home Assistant MQTT control is not proven impossible, and extracting credentials
 from a phone should not be part of any design. The APK exposes a legitimate
-server provisioning path. However, it is not yet safe to call from HA because its
-device-registration and FCM semantics, quota impact, certificate rotation, and
-revocation behavior are unknown.
+server provisioning path. However, a gated research call to that provisioning
+path failed with `ClientResponseError` and did not return device configuration
+structure. It is not yet safe to call from HA because its device-registration and
+FCM semantics, quota impact, certificate rotation, and revocation behavior are
+unknown.
 
 Corrected Cognito WebSocket authentication remains only a hypothesis. A corrected
 client ID may still fail if the Cognito role lacks IoT actions, and static analysis
@@ -439,12 +481,15 @@ cannot resolve that. The best current classification is:
 ### Next safe test plan for authentication
 
 1. Keep Home Assistant REST-only and do not add integration MQTT/control code.
-2. Continue to avoid `/cradles/pairedUsers/v3`, Storage, certificate download,
-   IoT/MQTT connect, MQTT subscribe, MQTT publish, and crib controls.
-3. Before any provisioning work, document the expected lifecycle for a new HA app-device
+2. Do not retry `/cradles/pairedUsers/v3` from the harness until the
+   `ClientResponseError` category can be investigated without exposing raw
+   response data or identifiers.
+3. Continue to avoid Storage, certificate download, IoT/MQTT connect, MQTT
+   subscribe, MQTT publish, shadow get/update, and crib controls.
+4. Before any further provisioning work, document the expected lifecycle for a new HA app-device
    registration: stable device ID, optional/required FCM token, device quota,
    unpair/revoke operation, and certificate refresh behavior.
-4. Seek vendor confirmation that third-party clients may use the provisioning
+5. Seek vendor confirmation that third-party clients may use the provisioning
    endpoint and that creating a dedicated HA device identity is supported.
 5. If vendor confirmation is unavailable, perform only a separately approved,
    connection-only IAM test first. Use existing short-lived Cognito IAM credentials,
