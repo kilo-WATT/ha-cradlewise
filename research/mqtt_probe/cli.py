@@ -9,13 +9,17 @@ from collections.abc import Sequence
 from typing import Any
 
 from .auth_probe import authentication_preview, live_authentication_probe
-from .provisioning_probe import provisioning_preview
+from .provisioning_probe import (
+    live_provisioning_inspection,
+    provisioning_preview,
+)
 from .redaction import redact
 from .safety import (
     SafetyError,
     assert_dry_run,
     install_network_guard,
     reject_secret_arguments,
+    validate_live_command_gates,
 )
 from .self_check import run_self_checks
 
@@ -33,6 +37,7 @@ def _parser() -> argparse.ArgumentParser:
             "provisioning-preview",
             "self-check",
             "live-auth",
+            "provisioning-inspect",
         ),
         default="all",
     )
@@ -47,23 +52,37 @@ def _parser() -> argparse.ArgumentParser:
         help="Allow the live-auth command to perform authentication only.",
     )
     parser.add_argument(
-        "--live-provisioning",
+        "--allow-live-provisioning",
         action="store_true",
-        help=(
-            "Reserved for a separately approved future phase; currently blocked."
-        ),
+        help="Allow the provisioning-inspect command to call provisioning once.",
+    )
+    parser.add_argument(
+        "--acknowledge-provisioning-side-effect",
+        action="store_true",
+        help="Acknowledge that provisioning inspection may have account side effects.",
     )
     return parser
 
 
 def _run(command: str, *, allow_live_auth: bool) -> dict[str, Any]:
     report: dict[str, Any] = {
-        "mode": "live_auth" if command == "live-auth" else "dry_run",
-        "network_enabled": command == "live-auth" and allow_live_auth,
+        "mode": (
+            "live_provisioning"
+            if command == "provisioning-inspect"
+            else "live_auth"
+            if command == "live-auth"
+            else "dry_run"
+        ),
+        "network_enabled": command in {"live-auth", "provisioning-inspect"}
+        and allow_live_auth,
     }
 
     if command == "live-auth":
         report["authentication"] = live_authentication_probe()
+        return redact(report)
+
+    if command == "provisioning-inspect":
+        report["provisioning"] = live_provisioning_inspection()
         return redact(report)
 
     if command == "self-check":
@@ -86,13 +105,16 @@ def main(argv: Sequence[str] | None = None) -> int:
         reject_secret_arguments(arguments)
         args = _parser().parse_args(arguments)
         live_auth_requested = args.command == "live-auth"
-        if args.live_provisioning:
-            raise SafetyError("live_action_not_implemented")
-        if args.allow_live_auth and not live_auth_requested:
-            raise SafetyError("live_auth_flag_without_command")
-        if live_auth_requested and not args.allow_live_auth:
-            raise SafetyError("live_auth_explicit_flag_required")
-        if not live_auth_requested:
+        provisioning_requested = args.command == "provisioning-inspect"
+        validate_live_command_gates(
+            command=args.command,
+            allow_live_auth=args.allow_live_auth,
+            allow_live_provisioning=args.allow_live_provisioning,
+            acknowledge_provisioning_side_effect=(
+                args.acknowledge_provisioning_side_effect
+            ),
+        )
+        if not (live_auth_requested or provisioning_requested):
             assert_dry_run(True)
             install_network_guard()
         report = _run(args.command, allow_live_auth=args.allow_live_auth)

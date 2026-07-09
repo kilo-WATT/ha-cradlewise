@@ -65,6 +65,35 @@ def reject_secret_arguments(arguments: Sequence[str]) -> None:
             raise SafetyError("secret_cli_argument_rejected")
 
 
+def validate_live_command_gates(
+    *,
+    command: str,
+    allow_live_auth: bool,
+    allow_live_provisioning: bool,
+    acknowledge_provisioning_side_effect: bool,
+) -> None:
+    """Validate explicit live-operation gates."""
+    live_auth_requested = command == "live-auth"
+    provisioning_requested = command == "provisioning-inspect"
+
+    if allow_live_auth and not (live_auth_requested or provisioning_requested):
+        raise SafetyError("live_auth_flag_without_command")
+    if allow_live_provisioning and not provisioning_requested:
+        raise SafetyError("live_provisioning_flag_without_command")
+    if acknowledge_provisioning_side_effect and not provisioning_requested:
+        raise SafetyError("provisioning_side_effect_ack_without_command")
+
+    if live_auth_requested and not allow_live_auth:
+        raise SafetyError("live_auth_explicit_flag_required")
+
+    if provisioning_requested and not allow_live_auth:
+        raise SafetyError("live_auth_explicit_flag_required")
+    if provisioning_requested and not allow_live_provisioning:
+        raise SafetyError("live_provisioning_explicit_flag_required")
+    if provisioning_requested and not acknowledge_provisioning_side_effect:
+        raise SafetyError("provisioning_side_effect_ack_required")
+
+
 def _network_blocked(*args: object, **kwargs: object) -> NoReturn:
     del args, kwargs
     raise SafetyError("network_access_blocked")

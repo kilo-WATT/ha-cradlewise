@@ -9,6 +9,8 @@ from typing import Any
 
 from .auth_probe import _require_environment_credentials
 from .provisioning_probe import (
+    _build_live_provisioning_payload,
+    _response_structure,
     build_provisioning_request_shape,
     validate_provisioning_request_shape,
 )
@@ -20,6 +22,7 @@ from .safety import (
     mqtt_connection_disabled,
     mqtt_publish_disabled,
     reject_secret_arguments,
+    validate_live_command_gates,
 )
 
 
@@ -93,6 +96,76 @@ def _check_desired_state_rejection() -> dict[str, str]:
     )
 
 
+def _check_provisioning_response_structure() -> dict[str, str]:
+    structure = _response_structure(
+        {
+            "deviceConfig": {
+                "s3Bucket": "redacted",
+                "s3ObjectKeys": ["redacted", "redacted"],
+                "deviceId": "redacted",
+                "cradleId": "redacted",
+                "groupCaCert": "redacted",
+                "roleId": "redacted",
+                "babyId": "redacted",
+            }
+        }
+    )
+    expected = {
+        "deviceConfig_present": True,
+        "s3Bucket_present": True,
+        "s3ObjectKeys_count": 2,
+        "deviceId_present": True,
+        "cradleId_present": True,
+        "groupCaCert_present": True,
+        "role_association_present": True,
+        "baby_association_present": True,
+    }
+    if structure != expected:
+        raise SafetyError("self_check_failed")
+    return {"result": "passed", "category": "provisioning_response_structure"}
+
+
+def _check_missing_baby_id_blocks() -> dict[str, str]:
+    return _expect_safety_error(
+        "missing_baby_id_for_provisioning",
+        lambda: _build_live_provisioning_payload(
+            email="redacted@example.invalid",
+            cradles=[{"cradleId": "redacted"}],
+        ),
+    )
+
+
+def _check_empty_cradles_block() -> dict[str, str]:
+    return _expect_safety_error(
+        "no_cradles_discovered",
+        lambda: _build_live_provisioning_payload(
+            email="redacted@example.invalid",
+            cradles=[],
+        ),
+    )
+
+
+def _check_live_gate(
+    category: str,
+    *,
+    command: str,
+    allow_live_auth: bool = False,
+    allow_live_provisioning: bool = False,
+    acknowledge_provisioning_side_effect: bool = False,
+) -> dict[str, str]:
+    return _expect_safety_error(
+        category,
+        lambda: validate_live_command_gates(
+            command=command,
+            allow_live_auth=allow_live_auth,
+            allow_live_provisioning=allow_live_provisioning,
+            acknowledge_provisioning_side_effect=(
+                acknowledge_provisioning_side_effect
+            ),
+        ),
+    )
+
+
 def run_self_checks() -> dict[str, Any]:
     """Run local checks without network, credentials, or generated files."""
     return {
@@ -101,7 +174,10 @@ def run_self_checks() -> dict[str, Any]:
         "checks": [
             _check_redaction(),
             _check_provisioning_shape(),
+            _check_provisioning_response_structure(),
             _check_desired_state_rejection(),
+            _check_empty_cradles_block(),
+            _check_missing_baby_id_blocks(),
             _expect_safety_error(
                 "identifier_cli_argument_rejected",
                 lambda: reject_secret_arguments(["person@example.com"]),
@@ -123,6 +199,45 @@ def run_self_checks() -> dict[str, Any]:
                 ),
             ),
             _check_missing_live_auth_credentials(),
+            _check_live_gate(
+                "live_auth_explicit_flag_required",
+                command="provisioning-inspect",
+            ),
+            _check_live_gate(
+                "live_provisioning_explicit_flag_required",
+                command="provisioning-inspect",
+                allow_live_auth=True,
+            ),
+            _check_live_gate(
+                "provisioning_side_effect_ack_required",
+                command="provisioning-inspect",
+                allow_live_auth=True,
+                allow_live_provisioning=True,
+            ),
+            _expect_safety_error(
+                "secret_cli_argument_rejected",
+                lambda: reject_secret_arguments(
+                    [
+                        "provisioning-inspect",
+                        "--allow-live-auth",
+                        "--allow-live-provisioning",
+                        "--acknowledge-provisioning-side-effect",
+                        "--password=secret",
+                    ]
+                ),
+            ),
+            _expect_safety_error(
+                "identifier_cli_argument_rejected",
+                lambda: reject_secret_arguments(
+                    [
+                        "provisioning-inspect",
+                        "--allow-live-auth",
+                        "--allow-live-provisioning",
+                        "--acknowledge-provisioning-side-effect",
+                        "user@example.com",
+                    ]
+                ),
+            ),
             _expect_safety_error(
                 "certificate_download_disabled",
                 certificate_download_disabled,

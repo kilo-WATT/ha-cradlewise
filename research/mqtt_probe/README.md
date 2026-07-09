@@ -81,6 +81,24 @@ This command may authenticate and perform safe account discovery only. It must
 not provision certificates, access S3, connect to MQTT, subscribe, publish, or
 send crib controls.
 
+## Future provisioning-response inspection probe
+
+Provisioning inspection is blocked unless live auth, live provisioning, and
+side-effect acknowledgement are all explicitly approved. It authenticates first,
+may call `POST /cradles/pairedUsers/v3` at most once, and reports only response
+structure:
+
+```shell
+CRADLEWISE_EMAIL='user@example.com' CRADLEWISE_PASSWORD='...' \
+  python -m research.mqtt_probe provisioning-inspect \
+  --allow-live-auth --allow-live-provisioning \
+  --acknowledge-provisioning-side-effect --json
+```
+
+This command must not download certificates, access S3 objects, connect to MQTT,
+subscribe, publish, send shadow requests, send shadow updates, or send crib
+controls.
+
 ## Explicitly unsupported
 
 The scaffold intentionally has no options for:
@@ -103,5 +121,7 @@ Provisioning remains reserved and blocked:
 ```shell
 python -m research.mqtt_probe live-auth
 python -m research.mqtt_probe live-auth --email user@example.com
-python -m research.mqtt_probe --live-provisioning
+python -m research.mqtt_probe provisioning-inspect
+python -m research.mqtt_probe provisioning-inspect --allow-live-provisioning
+python -m research.mqtt_probe provisioning-inspect --allow-live-auth --allow-live-provisioning
 ```
