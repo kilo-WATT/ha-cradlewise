@@ -1,1 +1,31 @@
-__pycache__/\n*.pyc
+__pycache__/
+*.pyc
+
+# Local APK / reverse-engineering artifacts
+apk-analysis-output/
+apk-work/
+xapk-out/
+jadx-out/
+apktool-out/
+*.apk
+*.xapk
+*.apks
+*.aab
+*.dex
+
+# Local logs and environment files
+*.log
+*.jsonl
+.env
+.env.*
+
+# Certificate and key material
+*.pem
+*.key
+*.crt
+*.cer
+*.der
+*.p12
+*.pfx
+*.jks
+*.keystore
