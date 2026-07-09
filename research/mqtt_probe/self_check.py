@@ -10,6 +10,7 @@ from typing import Any
 from .auth_probe import _require_environment_credentials
 from .provisioning_probe import (
     _build_live_provisioning_payload,
+    _http_status_metadata,
     _normalize_discovered_cradles,
     _response_structure,
     _safe_failure_report,
@@ -199,6 +200,83 @@ def _check_failure_report_after_post_attempt() -> dict[str, str]:
     }
 
 
+class _FakeHttpError(Exception):
+    def __init__(self, status: int) -> None:
+        super().__init__("do not expose this message")
+        self.status = status
+        self.message = "do not expose this message"
+        self.request_info = "https://example.invalid/secret"
+        self.headers = {"authorization": "Bearer secret"}
+        self.body = "secret response body"
+        self.text = "secret response text"
+
+
+class _FakeResponse:
+    def __init__(self, status_code: int) -> None:
+        self.status_code = status_code
+
+
+class _FakeResponseHttpError(Exception):
+    def __init__(self, status_code: int) -> None:
+        super().__init__("do not expose response exception")
+        self.response = _FakeResponse(status_code)
+        self.url = "https://example.invalid/secret"
+        self.cookies = {"session": "secret"}
+
+
+def _assert_no_http_sensitive_values(report: dict[str, Any]) -> None:
+    serialized = repr(report)
+    forbidden = (
+        "do not expose",
+        "example.invalid",
+        "authorization",
+        "Bearer",
+        "secret response",
+        "session",
+        "cookies",
+        "headers",
+        "body",
+        "text",
+        "url",
+        "request_info",
+    )
+    if any(value in serialized for value in forbidden):
+        raise SafetyError("self_check_failed")
+
+
+def _check_http_status_metadata(status: int, status_class: str) -> dict[str, str]:
+    error = _FakeHttpError(status)
+    metadata = _http_status_metadata(error)
+    if metadata != {"http_status": status, "http_status_class": status_class}:
+        raise SafetyError("self_check_failed")
+
+    report = _safe_failure_report(
+        "ClientResponseError",
+        "provisioning_request",
+        error=error,
+    )
+    if report["http_status"] != status:
+        raise SafetyError("self_check_failed")
+    if report["http_status_class"] != status_class:
+        raise SafetyError("self_check_failed")
+    _assert_no_http_sensitive_values(report)
+    return {"result": "passed", "category": f"http_status_{status}"}
+
+
+def _check_response_status_metadata() -> dict[str, str]:
+    metadata = _http_status_metadata(_FakeResponseHttpError(403))
+    if metadata != {"http_status": 403, "http_status_class": "4xx"}:
+        raise SafetyError("self_check_failed")
+    return {"result": "passed", "category": "response_http_status_403"}
+
+
+def _check_unknown_http_status_metadata() -> dict[str, str]:
+    metadata = _http_status_metadata(Exception("do not expose"))
+    if metadata != {"http_status": None, "http_status_class": None}:
+        raise SafetyError("self_check_failed")
+    return {"result": "passed", "category": "unknown_http_status"}
+
+
 def _check_live_gate(
     category: str,
     *,
@@ -236,6 +314,11 @@ def run_self_checks() -> dict[str, Any]:
             _check_missing_baby_id_blocks(),
             _check_unexpected_cradle_shape_does_not_crash(),
             _check_failure_report_after_post_attempt(),
+            _check_http_status_metadata(400, "4xx"),
+            _check_http_status_metadata(403, "4xx"),
+            _check_http_status_metadata(500, "5xx"),
+            _check_response_status_metadata(),
+            _check_unknown_http_status_metadata(),
             _expect_safety_error(
                 "identifier_cli_argument_rejected",
                 lambda: reject_secret_arguments(["person@example.com"]),

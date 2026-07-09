@@ -87,6 +87,31 @@ def _empty_response_structure() -> dict[str, Any]:
     }
 
 
+def _http_status_class(status: int | None) -> str | None:
+    if status is None:
+        return None
+    if 100 <= status <= 599:
+        return f"{status // 100}xx"
+    return None
+
+
+def _http_status_metadata(error: BaseException | None) -> dict[str, Any]:
+    """Extract only safe HTTP status metadata from response exceptions."""
+    status: int | None = None
+    if error is not None:
+        raw_status = getattr(error, "status", None)
+        if raw_status is None:
+            response = getattr(error, "response", None)
+            raw_status = getattr(response, "status_code", None)
+        if isinstance(raw_status, int):
+            status = raw_status
+
+    return {
+        "http_status": status,
+        "http_status_class": _http_status_class(status),
+    }
+
+
 def _safe_failure_report(
     category: str,
     stage: str,
@@ -94,8 +119,9 @@ def _safe_failure_report(
     app_config_present: bool = False,
     auth_success: bool = False,
     cradle_count: int | None = None,
+    error: BaseException | None = None,
 ) -> dict[str, Any]:
-    return {
+    report = {
         "mode": "live_provisioning",
         "network_attempted": True,
         "method": PROVISIONING_METHOD,
@@ -113,6 +139,8 @@ def _safe_failure_report(
         "failure_stage": stage,
         "credential_environment": _credential_environment(),
     }
+    report.update(_http_status_metadata(error))
+    return report
 
 
 def _normalize_key(key: object) -> str:
@@ -316,6 +344,7 @@ async def _live_provisioning_inspection_async() -> dict[str, Any]:
         return _safe_failure_report(
             normalized_error_category(error),
             "get_app_config",
+            error=error,
         )
 
     auth = CradlewiseAuth(
@@ -346,6 +375,7 @@ async def _live_provisioning_inspection_async() -> dict[str, Any]:
             normalized_error_category(error),
             "authenticate",
             app_config_present=app_config is not None,
+            error=error,
         )
 
     cradle_count: int | None = None
@@ -369,6 +399,7 @@ async def _live_provisioning_inspection_async() -> dict[str, Any]:
             "discover_cradles",
             app_config_present=app_config is not None,
             auth_success=True,
+            error=error,
         )
 
     try:
@@ -379,6 +410,7 @@ async def _live_provisioning_inspection_async() -> dict[str, Any]:
             "normalize_discovered_cradles",
             app_config_present=app_config is not None,
             auth_success=True,
+            error=error,
         )
 
     cradle_count = len(cradles)
@@ -400,6 +432,7 @@ async def _live_provisioning_inspection_async() -> dict[str, Any]:
             app_config_present=app_config is not None,
             auth_success=True,
             cradle_count=cradle_count,
+            error=error,
         )
 
     try:
@@ -427,6 +460,7 @@ async def _live_provisioning_inspection_async() -> dict[str, Any]:
             app_config_present=app_config is not None,
             auth_success=True,
             cradle_count=cradle_count,
+            error=error,
         )
 
     result = {
@@ -443,6 +477,8 @@ async def _live_provisioning_inspection_async() -> dict[str, Any]:
         "result": "success",
         "failure_category": None,
         "failure_stage": None,
+        "http_status": None,
+        "http_status_class": None,
         "credential_environment": _credential_environment(),
     }
     assert_no_desired_state(result)
@@ -465,5 +501,6 @@ def live_provisioning_inspection() -> dict[str, Any]:
             _safe_failure_report(
                 normalized_error_category(error),
                 "provisioning_inspection",
+                error=error,
             )
         )
