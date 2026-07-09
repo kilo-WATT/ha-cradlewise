@@ -3,13 +3,16 @@
 from __future__ import annotations
 
 import os
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from contextlib import contextmanager
 from typing import Any
 
 from .auth_probe import _require_environment_credentials
 from .provisioning_probe import (
+    _DEVICE_ENV_BY_FIELD,
     _DEVICE_INFO_CERT_FIELDS,
+    _FCM_TOKEN_ENV,
+    _baby_id_to_number,
     _build_live_provisioning_payload,
     _http_status_metadata,
     _normalize_discovered_cradles,
@@ -72,6 +75,43 @@ def _check_missing_live_auth_credentials() -> dict[str, str]:
         )
 
 
+# Obviously fake, non-identifying placeholders. Used only to drive payload
+# construction inside self-checks; their values are never printed.
+_FAKE_PROVISIONING_ENV = {
+    _FCM_TOKEN_ENV: "fake-fcm-token",
+    "CRADLEWISE_DEVICE_REGISTRATION_DATE": "1970-01-01",
+    "CRADLEWISE_DEVICE_APP_VERSION": "0.0.0",
+    "CRADLEWISE_DEVICE_NAME": "fake-device",
+    "CRADLEWISE_DEVICE_OS_VERSION": "0",
+    "CRADLEWISE_DEVICE_TIMEZONE": "UTC",
+    "CRADLEWISE_DEVICE_TYPE": "fake",
+    "CRADLEWISE_DEVICE_RESOLUTION": "0x0",
+}
+_FAKE_NUMERIC_BABY_CRADLE = {"babyId": "12345"}
+
+
+@contextmanager
+def _temporary_environment(
+    present: dict[str, str],
+    absent: Iterable[str] = (),
+) -> Iterator[None]:
+    """Set/unset environment variables for a check, restoring them afterward."""
+    names = set(present) | set(absent)
+    saved: dict[str, str | None] = {name: os.environ.get(name) for name in names}
+    try:
+        for name, value in present.items():
+            os.environ[name] = value
+        for name in absent:
+            os.environ.pop(name, None)
+        yield
+    finally:
+        for name, original in saved.items():
+            if original is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = original
+
+
 def _check_redaction() -> dict[str, str]:
     redacted = redact(
         {
@@ -87,6 +127,15 @@ def _check_redaction() -> dict[str, str]:
     if redacted["nested"][0] != REDACTED:
         raise SafetyError("self_check_failed")
     return {"result": "passed", "category": "redaction"}
+
+
+def _check_email_id_key_redacts() -> dict[str, str]:
+    # The value is deliberately NOT email-shaped, so this passes only if the
+    # "emailId" key itself is treated as sensitive (not the value pattern).
+    redacted = redact({"emailId": "not-email-shaped-identifier"})
+    if redacted["emailId"] != REDACTED:
+        raise SafetyError("self_check_failed")
+    return {"result": "passed", "category": "email_id_key_redacts"}
 
 
 def _check_provisioning_shape() -> dict[str, str]:
@@ -178,6 +227,119 @@ def _check_real_numeric_baby_id_redacts_to_string() -> dict[str, str]:
         "result": "passed",
         "category": "real_numeric_baby_id_redacts_to_string",
     }
+
+
+def _check_baby_id_numeric_conversion() -> dict[str, str]:
+    # Integer-like strings and native numbers convert to JSON numbers;
+    # non-numeric and boolean values are rejected.
+    if _baby_id_to_number("12345") != 12345:
+        raise SafetyError("self_check_failed")
+    if not isinstance(_baby_id_to_number("12345"), int):
+        raise SafetyError("self_check_failed")
+    if _baby_id_to_number(6789) != 6789:
+        raise SafetyError("self_check_failed")
+    if _baby_id_to_number("12.5") != 12.5:
+        raise SafetyError("self_check_failed")
+    _expect_safety_error(
+        "baby_id_not_numeric_for_provisioning",
+        lambda: _baby_id_to_number("not-a-number"),
+    )
+    _expect_safety_error(
+        "baby_id_not_numeric_for_provisioning",
+        lambda: _baby_id_to_number(True),
+    )
+    return {"result": "passed", "category": "baby_id_numeric_conversion"}
+
+
+def _check_live_payload_shape() -> dict[str, str]:
+    with _temporary_environment(_FAKE_PROVISIONING_ENV):
+        payload = _build_live_provisioning_payload(
+            email="redacted@example.invalid",
+            cradles=[dict(_FAKE_NUMERIC_BABY_CRADLE)],
+        )
+    if set(payload) != {"emailId", "babyId", "fcmToken", "device"}:
+        raise SafetyError("self_check_failed")
+    # Guard against regressing to the old, known-wrong snake_case shape.
+    if {"baby_id", "email", "fcm_token"} & set(payload):
+        raise SafetyError("self_check_failed")
+    if isinstance(payload["babyId"], bool) or not isinstance(
+        payload["babyId"], (int, float)
+    ):
+        raise SafetyError("self_check_failed")
+    if not isinstance(payload["fcmToken"], str) or not payload["fcmToken"]:
+        raise SafetyError("self_check_failed")
+    device = payload["device"]
+    if set(device) != set(_DEVICE_INFO_CERT_FIELDS):
+        raise SafetyError("self_check_failed")
+    if device["country"] != "IN" or device["os"] != "android":
+        raise SafetyError("self_check_failed")
+    return {"result": "passed", "category": "live_payload_shape"}
+
+
+def _check_live_payload_baby_id_numeric() -> dict[str, str]:
+    with _temporary_environment(_FAKE_PROVISIONING_ENV):
+        payload = _build_live_provisioning_payload(
+            email="redacted@example.invalid",
+            cradles=[{"babyId": "987654321"}],
+        )
+    if payload["babyId"] != 987654321:
+        raise SafetyError("self_check_failed")
+    if isinstance(payload["babyId"], bool) or not isinstance(payload["babyId"], int):
+        raise SafetyError("self_check_failed")
+    return {"result": "passed", "category": "live_payload_baby_id_numeric"}
+
+
+def _check_missing_fcm_token_blocks_before_post() -> dict[str, str]:
+    # Device info present, fcm token absent: must block before any POST.
+    device_only = {
+        name: value
+        for name, value in _FAKE_PROVISIONING_ENV.items()
+        if name != _FCM_TOKEN_ENV
+    }
+    with _temporary_environment(device_only, absent=(_FCM_TOKEN_ENV,)):
+        return _expect_safety_error(
+            "missing_fcm_token_for_provisioning",
+            lambda: _build_live_provisioning_payload(
+                email="redacted@example.invalid",
+                cradles=[dict(_FAKE_NUMERIC_BABY_CRADLE)],
+            ),
+        )
+
+
+def _check_missing_device_info_blocks_before_post() -> dict[str, str]:
+    # fcm token present, one device env var absent: must block before POST.
+    absent_field_env = _DEVICE_ENV_BY_FIELD["resolution"]
+    present = {
+        name: value
+        for name, value in _FAKE_PROVISIONING_ENV.items()
+        if name != absent_field_env
+    }
+    with _temporary_environment(present, absent=(absent_field_env,)):
+        return _expect_safety_error(
+            "missing_device_info_for_provisioning",
+            lambda: _build_live_provisioning_payload(
+                email="redacted@example.invalid",
+                cradles=[dict(_FAKE_NUMERIC_BABY_CRADLE)],
+            ),
+        )
+
+
+def _check_live_payload_redacts_identifiers() -> dict[str, str]:
+    # The built payload is never emitted, but confirm that if it were passed
+    # through redact() the email, babyId, and fcmToken would all be hidden.
+    with _temporary_environment(_FAKE_PROVISIONING_ENV):
+        payload = _build_live_provisioning_payload(
+            email="redacted@example.invalid",
+            cradles=[dict(_FAKE_NUMERIC_BABY_CRADLE)],
+        )
+    redacted = redact(payload)
+    if redacted["emailId"] != REDACTED:
+        raise SafetyError("self_check_failed")
+    if redacted["babyId"] != REDACTED or not isinstance(redacted["babyId"], str):
+        raise SafetyError("self_check_failed")
+    if redacted["fcmToken"] != REDACTED:
+        raise SafetyError("self_check_failed")
+    return {"result": "passed", "category": "live_payload_redacts_identifiers"}
 
 
 def _check_desired_state_rejection() -> dict[str, str]:
@@ -393,6 +555,7 @@ def run_self_checks() -> dict[str, Any]:
         "network_attempted": False,
         "checks": [
             _check_redaction(),
+            _check_email_id_key_redacts(),
             _check_provisioning_shape(),
             _check_provisioning_shape_field_names(),
             _check_provisioning_shape_fully_redacted(),
@@ -400,6 +563,12 @@ def run_self_checks() -> dict[str, Any]:
             _check_provisioning_field_types(),
             _check_provisioning_field_types_survive_redaction(),
             _check_real_numeric_baby_id_redacts_to_string(),
+            _check_baby_id_numeric_conversion(),
+            _check_live_payload_shape(),
+            _check_live_payload_baby_id_numeric(),
+            _check_missing_fcm_token_blocks_before_post(),
+            _check_missing_device_info_blocks_before_post(),
+            _check_live_payload_redacts_identifiers(),
             _check_provisioning_response_structure(),
             _check_desired_state_rejection(),
             _check_dict_cradles_normalize(),

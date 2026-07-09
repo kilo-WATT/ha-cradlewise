@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import os
 from typing import Any
 
 from .auth_probe import (
@@ -31,6 +32,27 @@ _DEVICE_INFO_CERT_FIELDS = (
     "type",
     "resolution",
 )
+
+# fcmToken source for the gated live provisioning path. Read only as presence;
+# its value is never logged or placed in any report.
+_FCM_TOKEN_ENV = "CRADLEWISE_FCM_TOKEN"
+
+# DeviceInfoCert values must come only from explicit, safe environment
+# variables for now, never invented silently. `country`/`os` are the two
+# statically confirmed hardcoded app values and are the only literals allowed.
+_DEVICE_HARDCODED_VALUES = {
+    "country": "IN",
+    "os": "android",
+}
+_DEVICE_ENV_BY_FIELD = {
+    "registrationDate": "CRADLEWISE_DEVICE_REGISTRATION_DATE",
+    "appVersion": "CRADLEWISE_DEVICE_APP_VERSION",
+    "deviceName": "CRADLEWISE_DEVICE_NAME",
+    "osVersion": "CRADLEWISE_DEVICE_OS_VERSION",
+    "timezone": "CRADLEWISE_DEVICE_TIMEZONE",
+    "type": "CRADLEWISE_DEVICE_TYPE",
+    "resolution": "CRADLEWISE_DEVICE_RESOLUTION",
+}
 
 
 def build_provisioning_request_shape() -> dict[str, Any]:
@@ -322,11 +344,74 @@ def _normalize_discovered_cradles(value: Any) -> list[Any]:
     return []
 
 
+def _baby_id_to_number(value: Any) -> int | float:
+    """Convert a discovered babyId to a JSON-number-compatible value.
+
+    The confirmed app model serializes babyId as a JSON number (it builds
+    `java.math.BigDecimal(babyId)` before the request), so the wire value must
+    not be a quoted string.
+    """
+    if isinstance(value, bool):
+        raise SafetyError("baby_id_not_numeric_for_provisioning")
+    if isinstance(value, (int, float)):
+        return value
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            raise SafetyError("missing_baby_id_for_provisioning")
+        try:
+            return int(text)
+        except ValueError:
+            pass
+        try:
+            return float(text)
+        except ValueError as error:
+            raise SafetyError("baby_id_not_numeric_for_provisioning") from error
+    raise SafetyError("baby_id_not_numeric_for_provisioning")
+
+
+def _require_env_value(name: str, missing_category: str) -> str:
+    """Return a required environment value's presence-checked contents.
+
+    The value is returned for payload construction only; it is never logged or
+    placed in any report.
+    """
+    value = os.environ.get(name)
+    if value is None or not value.strip():
+        raise SafetyError(missing_category)
+    return value
+
+
+def _build_device_info() -> dict[str, str]:
+    """Build the DeviceInfoCert object from explicit safe env vars.
+
+    Values come only from the CRADLEWISE_DEVICE_* environment variables, plus
+    the two statically confirmed hardcoded literals (`country`, `os`). Nothing
+    is invented silently. Missing values block before POST.
+    """
+    device: dict[str, str] = {}
+    for field in _DEVICE_INFO_CERT_FIELDS:
+        if field in _DEVICE_HARDCODED_VALUES:
+            device[field] = _DEVICE_HARDCODED_VALUES[field]
+            continue
+        env_name = _DEVICE_ENV_BY_FIELD[field]
+        device[field] = _require_env_value(
+            env_name,
+            "missing_device_info_for_provisioning",
+        )
+    return device
+
+
 def _build_live_provisioning_payload(
     *,
     email: str,
     cradles: list[Any],
 ) -> dict[str, Any]:
+    """Build the statically confirmed GetDeviceCertV3Request payload.
+
+    Raises a normalized SafetyError, before any POST, if the babyId, fcmToken,
+    or any DeviceInfoCert value is missing or unusable.
+    """
     if not cradles:
         raise SafetyError("no_cradles_discovered")
 
@@ -338,18 +423,14 @@ def _build_live_provisioning_payload(
         raise SafetyError("missing_baby_id_for_provisioning")
 
     payload = {
-        "baby_id": baby_id,
-        "email": email,
-        "fcm_token": None,
-        "device": {
-            "app_version": "research-probe",
-            "device_name": "research-probe",
-            "os": "python",
-            "os_version": "unknown",
-        },
+        "emailId": email,
+        "babyId": _baby_id_to_number(baby_id),
+        "fcmToken": _require_env_value(
+            _FCM_TOKEN_ENV,
+            "missing_fcm_token_for_provisioning",
+        ),
+        "device": _build_device_info(),
     }
-    if payload["baby_id"] is None:
-        raise SafetyError("missing_baby_id_for_provisioning")
     assert_no_desired_state(payload)
     return payload
 

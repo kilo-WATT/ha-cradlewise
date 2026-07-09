@@ -20,6 +20,7 @@ _SENSITIVE_KEYS = {
     "credential",
     "deviceid",
     "email",
+    "emailid",
     "fcmtoken",
     "groupcacert",
     "identityid",
