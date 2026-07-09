@@ -520,6 +520,130 @@ verified from fuller decompiled material. The current evidence is sufficient to
 say the first probe payload shape was wrong, but not sufficient to safely
 construct the complete `DeviceInfoCert` body.
 
+### DeviceInfoCert static extraction (confirmed)
+
+Offline DEX bytecode decoding (constructor `iput-object` order, `toString`
+concatenation order, and the argument order used at both real call sites)
+confirms the `DeviceInfoCert` class body that the prior section left
+unresolved.
+
+Confirmed class: `Lcom/cradlewise/nini/core/mqtt/api/model/DeviceInfoCert;`
+
+Confirmed constructor:
+
+```kotlin
+DeviceInfoCert(
+  registrationDate: String,
+  appVersion: String,
+  country: String,
+  os: String,
+  deviceName: String,
+  osVersion: String,
+  timezone: String,
+  type: String,
+  resolution: String
+)
+```
+
+Confirmed fields, in constructor/declaration order:
+
+- `registrationDate`
+- `appVersion`
+- `country`
+- `os`
+- `deviceName`
+- `osVersion`
+- `timezone`
+- `type`
+- `resolution`
+
+Notes:
+
+- No `deviceId` field exists on `DeviceInfoCert`.
+- It is a Kotlin `data class` (has `copy`, `component1`..`component9`,
+  `equals`, `hashCode`, `toString`).
+- Field order was recovered from the `<init>` `iput-object` sequence and
+  cross-checked against `toString()`'s literal concatenation order and
+  against the argument order used at both real call sites. All three agree.
+
+Value sources, from the call site used by the actual provisioning flow
+(`MqttRepository.refreshDeviceCertificates`):
+
+| Field | Source | Confidence |
+|---|---|---|
+| `registrationDate` | `SharedPreferences` key `CRIB_ACTIVATION_DATE`, default empty string | High |
+| `appVersion` | Android `PackageManager` `packageInfo.versionName` | High |
+| `country` | Hardcoded literal `"IN"` | High |
+| `os` | Hardcoded literal `"android"` | High |
+| `deviceName` | `Build.MODEL + "_" + Settings.Secure.ANDROID_ID` | High |
+| `osVersion` | `Build.VERSION.SDK_INT` as a string | High |
+| `timezone` | `TimeZone.getDefault().getDisplayName()` (human-readable name, not a TZ ID) | High |
+| `type` | Phone/tablet classification from `DeviceType`, derived via `WindowManager`/`DisplayMetrics` | Medium |
+| `resolution` | `DisplayMetrics` formatted as `"{width,height}"` | High |
+
+Confirmed wrapper:
+
+```kotlin
+GetDeviceCertV3Request(
+  emailId: String,
+  babyId: BigDecimal,
+  fcmToken: String,
+  device: DeviceInfoCert
+)
+```
+
+Wrapper notes:
+
+- The public `fetchDeviceCertsV3` function signature takes `babyId` as a
+  `String`.
+- The app converts that `babyId` `String` to `java.math.BigDecimal` before
+  constructing the `GetDeviceCertV3Request` DTO.
+- On the wire, `babyId` therefore likely serializes as a JSON number, not a
+  quoted string.
+- `emailId`, `babyId`, and `fcmToken` are all read from
+  `CradlewiseSharedPreference` under keys `USER_EMAIL`, `BABY_ID`, and
+  `FCM_TOKEN` respectively (cached local preferences, not fetched live at
+  call time).
+
+Likely explanation for the prior HTTP 400, updated with this evidence:
+
+1. Top-level field names were wrong: `email`/`baby_id`/`fcm_token` instead
+   of `emailId`/`babyId`/`fcmToken`.
+2. `babyId` was likely sent as a JSON string instead of a JSON number.
+3. `fcmToken` was sent as `null`, but the app's request model expects a
+   non-null string.
+4. The guessed `device` object used snake_case keys and placeholder values
+   that do not match any of the nine confirmed `DeviceInfoCert` field names.
+5. The `DeviceInfoCert` body sent by the prior probe was incomplete and
+   used the wrong shape entirely.
+
+Proposed corrected redacted payload shape — **statically inferred, not yet
+live-tested**:
+
+```json
+{
+  "emailId": "<redacted-email-like-identifier>",
+  "babyId": 0,
+  "fcmToken": "<redacted-fcm-token-or-safe-test-equivalent-if-proven-valid>",
+  "device": {
+    "registrationDate": "<redacted>",
+    "appVersion": "<redacted>",
+    "country": "<redacted>",
+    "os": "<redacted>",
+    "deviceName": "<redacted>",
+    "osVersion": "<redacted>",
+    "timezone": "<redacted>",
+    "type": "<redacted>",
+    "resolution": "<redacted>"
+  }
+}
+```
+
+This shape is derived entirely from offline DEX bytecode decoding of the
+already-extracted APK. It has not been sent over the network. Do not run it
+without separate explicit approval, per the research constraints in this
+document.
+
 ### Credential scope
 
 The strongest supported interpretation is that an IoT identity is scoped to an
