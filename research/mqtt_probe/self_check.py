@@ -9,12 +9,15 @@ from typing import Any
 
 from .auth_probe import _require_environment_credentials
 from .provisioning_probe import (
+    _DEVICE_INFO_CERT_FIELDS,
     _build_live_provisioning_payload,
     _http_status_metadata,
     _normalize_discovered_cradles,
     _response_structure,
     _safe_failure_report,
+    build_provisioning_request_field_types,
     build_provisioning_request_shape,
+    validate_provisioning_request_field_types,
     validate_provisioning_request_shape,
 )
 from .redaction import REDACTED, redact
@@ -90,6 +93,91 @@ def _check_provisioning_shape() -> dict[str, str]:
     shape = build_provisioning_request_shape()
     validate_provisioning_request_shape(shape)
     return {"result": "passed", "category": "provisioning_shape"}
+
+
+def _check_provisioning_shape_field_names() -> dict[str, str]:
+    shape = build_provisioning_request_shape()
+    if set(shape) != {"emailId", "babyId", "fcmToken", "device"}:
+        raise SafetyError("self_check_failed")
+    if set(shape["device"]) != set(_DEVICE_INFO_CERT_FIELDS):
+        raise SafetyError("self_check_failed")
+    # Guard against regressing to the old, known-wrong snake_case shape.
+    stale_keys = {"baby_id", "email", "fcm_token"}
+    if stale_keys & set(shape):
+        raise SafetyError("self_check_failed")
+    stale_device_keys = {"app_version", "device_name", "os_version"}
+    if stale_device_keys & set(shape["device"]):
+        raise SafetyError("self_check_failed")
+    return {"result": "passed", "category": "provisioning_shape_field_names"}
+
+
+def _check_provisioning_shape_fully_redacted() -> dict[str, str]:
+    shape = build_provisioning_request_shape()
+    if shape["emailId"] != REDACTED or shape["babyId"] != REDACTED:
+        raise SafetyError("self_check_failed")
+    if shape["fcmToken"] is None or shape["fcmToken"] != REDACTED:
+        raise SafetyError("self_check_failed")
+    if any(value != REDACTED for value in shape["device"].values()):
+        raise SafetyError("self_check_failed")
+    return {"result": "passed", "category": "provisioning_shape_fully_redacted"}
+
+
+def _check_provisioning_shape_idempotent_under_redaction() -> dict[str, str]:
+    # Proves the preview shape is unchanged by the same redact() pass the
+    # real CLI output goes through, i.e. it was already fully redacted.
+    shape = build_provisioning_request_shape()
+    if redact(shape) != shape:
+        raise SafetyError("self_check_failed")
+    return {
+        "result": "passed",
+        "category": "provisioning_shape_idempotent_under_redaction",
+    }
+
+
+def _check_provisioning_field_types() -> dict[str, str]:
+    field_types = build_provisioning_request_field_types()
+    validate_provisioning_request_field_types(field_types)
+    stale_keys = {
+        "emailId",
+        "babyId",
+        "fcmToken",
+        "device",
+        "baby_id",
+        "email",
+        "fcm_token",
+    }
+    if stale_keys & set(field_types):
+        raise SafetyError("self_check_failed")
+    return {"result": "passed", "category": "provisioning_field_types"}
+
+
+def _check_provisioning_field_types_survive_redaction() -> dict[str, str]:
+    # Proves the babyId type note is not caught by the sensitive-key filter
+    # and silently overwritten with the generic redaction marker.
+    field_types = build_provisioning_request_field_types()
+    redacted_field_types = redact(field_types)
+    if redacted_field_types != field_types:
+        raise SafetyError("self_check_failed")
+    if redacted_field_types["babyId_type"] != "number/BigDecimal":
+        raise SafetyError("self_check_failed")
+    return {
+        "result": "passed",
+        "category": "provisioning_field_types_survive_redaction",
+    }
+
+
+def _check_real_numeric_baby_id_redacts_to_string() -> dict[str, str]:
+    # Proves a real numeric babyId occurring anywhere under the sensitive
+    # "babyId" key still redacts to the generic string marker, never a
+    # number. This guards against ever reintroducing a type-preserving
+    # redaction path for sensitive keys.
+    redacted = redact({"babyId": 123456789})
+    if redacted["babyId"] != REDACTED or not isinstance(redacted["babyId"], str):
+        raise SafetyError("self_check_failed")
+    return {
+        "result": "passed",
+        "category": "real_numeric_baby_id_redacts_to_string",
+    }
 
 
 def _check_desired_state_rejection() -> dict[str, str]:
@@ -306,6 +394,12 @@ def run_self_checks() -> dict[str, Any]:
         "checks": [
             _check_redaction(),
             _check_provisioning_shape(),
+            _check_provisioning_shape_field_names(),
+            _check_provisioning_shape_fully_redacted(),
+            _check_provisioning_shape_idempotent_under_redaction(),
+            _check_provisioning_field_types(),
+            _check_provisioning_field_types_survive_redaction(),
+            _check_real_numeric_baby_id_redacts_to_string(),
             _check_provisioning_response_structure(),
             _check_desired_state_rejection(),
             _check_dict_cradles_normalize(),

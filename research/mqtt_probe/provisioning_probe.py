@@ -12,43 +12,114 @@ from .auth_probe import (
     _with_timeout,
 )
 from .metadata import PROVISIONING_METHOD, PROVISIONING_PATH
-from .redaction import normalized_error_category, redact
+from .redaction import REDACTED, normalized_error_category, redact
 from .safety import SafetyError, assert_no_desired_state
 
 _PROVISIONING_REQUESTS_THIS_RUN = 0
 
+# Confirmed by offline DEX bytecode decoding of GetDeviceCertV3Request and
+# DeviceInfoCert (see research/cradlewise-control-endpoints.md). Field order
+# matches the recovered <init> constructor order.
+_DEVICE_INFO_CERT_FIELDS = (
+    "registrationDate",
+    "appVersion",
+    "country",
+    "os",
+    "deviceName",
+    "osVersion",
+    "timezone",
+    "type",
+    "resolution",
+)
+
 
 def build_provisioning_request_shape() -> dict[str, Any]:
-    """Return the redacted request shape expected by the provisioning endpoint."""
+    """Return the fully redacted request shape confirmed by static analysis.
+
+    Field names and nesting match the decompiled `GetDeviceCertV3Request` and
+    `DeviceInfoCert` models: `emailId`/`babyId`/`fcmToken`/`device`. Every
+    value here is the fixed redaction marker, deliberately including
+    `babyId` and `device.*`, so nothing resembling real request data ever
+    appears in preview output. See `build_provisioning_request_field_types`
+    for the confirmed JSON type of each field.
+    """
     return {
-        "baby_id": "<redacted>",
-        "email": "<redacted>",
-        "fcm_token": "<redacted-or-missing>",
-        "device": {
-            "app_version": "string",
-            "device_name": "<generic>",
-            "os": "string",
-            "os_version": "string",
-        },
+        "emailId": REDACTED,
+        "babyId": REDACTED,
+        "fcmToken": REDACTED,
+        "device": {field: REDACTED for field in _DEVICE_INFO_CERT_FIELDS},
     }
 
 
 def validate_provisioning_request_shape(shape: dict[str, Any]) -> None:
-    """Validate that the preview remains redacted and non-control-only."""
-    required = {"baby_id", "email", "fcm_token", "device"}
+    """Validate that the preview stays fully redacted and matches the confirmed model."""
+    required = {"emailId", "babyId", "fcmToken", "device"}
     if set(shape) != required:
         raise SafetyError("unexpected_provisioning_shape")
-    if shape["baby_id"] != "<redacted>" or shape["email"] != "<redacted>":
+    if shape["emailId"] != REDACTED:
         raise SafetyError("identifier_in_preview_rejected")
-    if not isinstance(shape["device"], dict):
+    if shape["babyId"] != REDACTED:
+        raise SafetyError("identifier_in_preview_rejected")
+    if shape["fcmToken"] is None:
+        raise SafetyError("fcm_token_null_in_preview")
+    if shape["fcmToken"] != REDACTED:
+        raise SafetyError("identifier_in_preview_rejected")
+    if not isinstance(shape["device"], dict) or set(shape["device"]) != set(
+        _DEVICE_INFO_CERT_FIELDS
+    ):
         raise SafetyError("invalid_device_shape")
+    if any(value != REDACTED for value in shape["device"].values()):
+        raise SafetyError("identifier_in_preview_rejected")
     assert_no_desired_state(shape)
 
 
+def build_provisioning_request_field_types() -> dict[str, Any]:
+    """Return confirmed field-type metadata for the provisioning request.
+
+    This is descriptive metadata only, never a live or redacted value, so it
+    is safe to show a real JSON type name. Keys are deliberately spelled
+    `*_type`/`device_types` rather than the literal field names (`babyId`,
+    `fcmToken`) so `redaction.redact`'s sensitive-key filter never matches
+    them and silently overwrites this metadata with the generic redaction
+    marker. `babyId` is confirmed to serialize as a JSON number: the app
+    builds `java.math.BigDecimal(babyId)` before constructing the request.
+    Every other field is a JSON string.
+    """
+    return {
+        "emailId_type": "string",
+        "babyId_type": "number/BigDecimal",
+        "fcmToken_type": "string",
+        "device_types": {field: "string" for field in _DEVICE_INFO_CERT_FIELDS},
+    }
+
+
+def validate_provisioning_request_field_types(field_types: dict[str, Any]) -> None:
+    """Validate that field-type metadata matches the confirmed model."""
+    required = {"emailId_type", "babyId_type", "fcmToken_type", "device_types"}
+    if set(field_types) != required:
+        raise SafetyError("unexpected_provisioning_field_types")
+    if field_types["emailId_type"] != "string":
+        raise SafetyError("unexpected_provisioning_field_types")
+    if field_types["babyId_type"] != "number/BigDecimal":
+        raise SafetyError("unexpected_baby_id_field_type")
+    if field_types["fcmToken_type"] != "string":
+        raise SafetyError("unexpected_provisioning_field_types")
+    if not isinstance(field_types["device_types"], dict) or set(
+        field_types["device_types"]
+    ) != set(_DEVICE_INFO_CERT_FIELDS):
+        raise SafetyError("invalid_device_field_types")
+    if any(value != "string" for value in field_types["device_types"].values()):
+        raise SafetyError("invalid_device_field_types")
+    assert_no_desired_state(field_types)
+
+
 def provisioning_preview() -> dict[str, Any]:
-    """Return a fixed redacted provisioning shape."""
+    """Return a fixed, fully redacted provisioning shape plus field-type metadata."""
     request_shape = build_provisioning_request_shape()
     validate_provisioning_request_shape(request_shape)
+
+    request_field_types = build_provisioning_request_field_types()
+    validate_provisioning_request_field_types(request_field_types)
 
     preview: dict[str, Any] = {
         "mode": "dry_run",
@@ -57,6 +128,7 @@ def provisioning_preview() -> dict[str, Any]:
         "method": PROVISIONING_METHOD,
         "path": PROVISIONING_PATH,
         "request_shape": request_shape,
+        "request_field_types": request_field_types,
         "expected_response_shape": {
             "deviceConfig_present": "boolean",
             "s3Bucket_present": "boolean",
