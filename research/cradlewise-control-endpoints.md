@@ -2,9 +2,10 @@
 
 ## Scope and provenance
 
-This note records offline static analysis of `Cradlewise_2.57.8_APKPure.xapk` only.
-No application code was executed, no network requests were made, and no credentials
-or live devices were used.
+This note records offline static analysis of `Cradlewise_2.57.8_APKPure.xapk`,
+plus the explicitly noted live-auth-only probe result below. Except for that
+gated authentication probe, no application code was executed, no network requests
+were made, and no credentials or live devices were used.
 
 - XAPK SHA-256: `70F333259FAA45F14D2E6064F4D5C2E1E4370604CD431A8EBE500E04CFA2D7F9`
 - Base APK: `com.cradlewise.nini.app.apk`
@@ -347,6 +348,36 @@ No client certificate or private key is bundled statically in the base APK. No
 IoT keypair generation call was found. The backend provisions an existing
 certificate/private-key pair through authenticated API and Storage operations.
 
+### Live-auth-only probe result
+
+A gated `research/mqtt_probe` live-auth-only probe was run from a disposable
+Debian LXC research environment. The probe used credentials only from environment
+variables, reported only redacted metadata, and the environment variables were
+unset immediately after the run.
+
+Result summary:
+
+| Field | Result |
+|---|---|
+| `result` | `success` |
+| `region` | `us-east-1` |
+| `network_attempted` | `true` |
+| `app_config_present` | `true` |
+| `authentication_attempted` | `true` |
+| `cradle_count` | `1` |
+| `discovery_failure_category` | `null` |
+| `credential_expiration_present` | `false` |
+
+This validates that the existing Cradlewise account authentication and safe
+cradle discovery path can succeed from the research harness. It does **not**
+validate MQTT authorization or certificate provisioning.
+
+The probe did not make a provisioning request, did not call
+`POST /cradles/pairedUsers/v3`, did not download certificates, did not access S3,
+did not connect/subscribe/publish over MQTT, and did not send crib commands. No
+credentials, tokens, certificates, keys, identifiers, raw responses, or exception
+messages were recorded in this note.
+
 ### Credential scope
 
 The strongest supported interpretation is that an IoT identity is scoped to an
@@ -366,8 +397,8 @@ cannot be proven from the APK.
 
 | Auth piece | Source | Used for | Available to HA? | Evidence | Confidence | Risk |
 |---|---|---|---|---|---|---|
-| Cognito user session | Amplify/Cognito login | Authenticated REST and Storage session | Yes; pycradlewise already performs equivalent Cognito login and IAM exchange | APK: `CradlewiseApplication.setupAmplify`, `PostAuthBootstrapUseCaseImpl`; pycradlewise 0.3.1: `auth.py:CradlewiseAuth` | High | Account credentials and short-lived tokens must remain protected |
-| Cognito-derived IAM credentials | Cognito Identity Pool | API Gateway SigV4 in pycradlewise; Amplify services in app | Yes, short-lived credentials are already obtained | pycradlewise `auth.py:_exchange_for_iam`, `client.py:_api_request` | High | Their effective IoT permissions are unknown; possession does not prove MQTT authorization |
+| Cognito user session | Amplify/Cognito login | Authenticated REST and Storage session | Yes; live-auth-only probe succeeded with redacted metadata | APK: `CradlewiseApplication.setupAmplify`, `PostAuthBootstrapUseCaseImpl`; pycradlewise 0.3.1: `auth.py:CradlewiseAuth`; `research/mqtt_probe` live-auth-only result | High | Account credentials and short-lived tokens must remain protected |
+| Cognito-derived IAM credentials | Cognito Identity Pool | API Gateway SigV4 in pycradlewise; Amplify services in app | Yes for REST/auth discovery; IoT permissions remain unproven | pycradlewise `auth.py:_exchange_for_iam`, `client.py:_api_request`; live-auth-only probe reached app config/auth/discovery successfully | High for REST/auth discovery; unknown for IoT | Their effective IoT permissions are unknown; possession does not prove MQTT authorization |
 | IoT endpoint/region | App DEX constant | AWS IoT broker selection | Yes; public configuration, already extracted | APK `RemoteMqttConnectionV2.connect`; pycradlewise `bootstrap.py:_extract_iot_endpoint` | High | Endpoint correctness alone does not grant access |
 | Backend app-device ID | Backend device registration/local repository | Device assignment and certificate provisioning; likely MQTT client ID | Not safely established for HA without a supported registration lifecycle | `GeneralRepository.getDeviceId`; `GetDeviceCertificatesUseCaseImpl.invoke`; `DeviceConfig.deviceId` | High for provisioning use; medium for client-ID mapping | Registering another client may consume a device slot or alter assignment state |
 | Provisioning REST call | Authenticated app REST API | Requests IoT device configuration | Technically reachable through signed REST, but not safely reusable yet | `MqttBackendService.fetchDeviceCertsV3$2.invokeSuspend`; POST `/cradles/pairedUsers/v3` | High | Requires app-specific device/FCM/account context and has assignment/limit side effects |
@@ -407,22 +438,24 @@ cannot resolve that. The best current classification is:
 
 ### Next safe test plan for authentication
 
-1. Keep this phase offline. Do not call `/cradles/pairedUsers/v3`, Storage, or IoT.
-2. Before any live work, document the expected lifecycle for a new HA app-device
+1. Keep Home Assistant REST-only and do not add integration MQTT/control code.
+2. Continue to avoid `/cradles/pairedUsers/v3`, Storage, certificate download,
+   IoT/MQTT connect, MQTT subscribe, MQTT publish, and crib controls.
+3. Before any provisioning work, document the expected lifecycle for a new HA app-device
    registration: stable device ID, optional/required FCM token, device quota,
    unpair/revoke operation, and certificate refresh behavior.
-3. Seek vendor confirmation that third-party clients may use the provisioning
+4. Seek vendor confirmation that third-party clients may use the provisioning
    endpoint and that creating a dedicated HA device identity is supported.
-4. If vendor confirmation is unavailable, perform only a separately approved,
+5. If vendor confirmation is unavailable, perform only a separately approved,
    connection-only IAM test first. Use existing short-lived Cognito IAM credentials,
    expose no values, publish nothing, and record only the normalized broker result.
-5. A failed IAM connection should end the WebSocket approach; do not vary random
+6. A failed IAM connection should end the WebSocket approach; do not vary random
    client IDs or probe policies.
-6. Consider a provisioning test only with explicit approval after quota and
+7. Consider a provisioning test only with explicit approval after quota and
    revocation are understood. It must create a dedicated HA identity rather than
    reuse or extract the phone's certificate, and private material must never enter
    logs, diagnostics, backups, or source control.
-7. Validate certificate revocation/removal before any control test. A credential
+8. Validate certificate revocation/removal before any control test. A credential
    that cannot be reliably revoked is unsuitable for production HA support.
-8. Only then test a read-only mTLS connection and shadow `get` in an isolated
+9. Only then test a read-only mTLS connection and shadow `get` in an isolated
    harness. Control publishing remains a later, separately approved phase.
